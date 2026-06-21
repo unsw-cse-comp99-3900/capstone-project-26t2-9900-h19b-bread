@@ -3,7 +3,7 @@ import {
   UserOutlined,
   LockOutlined,
   MailOutlined,
-  BarChartOutlined,
+  ApiOutlined,
 } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import "./Login.scss";
@@ -15,11 +15,11 @@ const Register = () => {
     <div className="login-root">
       {/* ── Left brand panel ── */}
       <div className="login-root__brand">
-        {/* <div className="login-root__logo-icon">
-          <BarChartOutlined />
-        </div> */}
-        <span className="login-root__sys-name">API Platform</span>
-        <span className="login-root__sys-sub">Dashboard System</span>
+        <div className="login-root__logo-icon">
+          <ApiOutlined />
+        </div>
+        <span className="login-root__sys-name">E-Invoice API Ecosystem</span>
+        <span className="login-root__sys-sub">Discovery · Composition · Publisher</span>
       </div>
 
       {/* ── Right form panel ── */}
@@ -28,7 +28,7 @@ const Register = () => {
           <div className="login-root__form-header">
             <p className="login-root__form-title">Create Account</p>
             <span className="login-root__form-subtitle">
-              Fill in the details below to get started
+              Register your enterprise developer account
             </span>
           </div>
 
