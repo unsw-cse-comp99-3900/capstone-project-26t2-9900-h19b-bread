@@ -185,10 +185,13 @@
   padding: 24px;
   overflow: auto;
   background: #f0f2f5;
+  display: flex;
+  flex-direction: column;
 }
 
 // ─── Dashboard Card ───────────────────────────────────────────────────────────
 .hp-card {
+  flex: 1;
   background: #fff;
   border: 1px solid #e8e8e8;
   border-radius: 4px;

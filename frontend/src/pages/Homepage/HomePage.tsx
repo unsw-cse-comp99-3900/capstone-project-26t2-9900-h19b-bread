@@ -10,6 +10,7 @@ import {
   Typography,
   Divider,
   Tooltip,
+  Popconfirm,
 } from 'antd';
 import {
   UserOutlined,
@@ -21,6 +22,9 @@ import {
   ApiOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  EditOutlined,
+  SwapOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import type { TableColumnsType } from 'antd';
@@ -100,14 +104,15 @@ const HomePage: React.FC = () => {
       title: 'API Name',
       dataIndex: 'name',
       key: 'name',
-      width: 200,
+      width: 155,
+      ellipsis: true,
     },
     {
       title: 'Protocol',
       dataIndex: 'protocol',
       key: 'protocol',
       align: 'center',
-      width: 90,
+      width: 75,
       render: (protocol: string) => (
         <Tag color={protocolColorMap[protocol]}>{protocol}</Tag>
       ),
@@ -123,21 +128,21 @@ const HomePage: React.FC = () => {
       dataIndex: 'authMethod',
       key: 'authMethod',
       align: 'center',
-      width: 110,
+      width: 100,
     },
     {
       title: 'Category',
       dataIndex: 'category',
       key: 'category',
       align: 'center',
-      width: 140,
+      width: 130,
     },
     {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
       align: 'center',
-      width: 110,
+      width: 88,
       render: (status: string) => (
         <Tag color={statusColorMap[status]}>{status}</Tag>
       ),
@@ -146,12 +151,38 @@ const HomePage: React.FC = () => {
       title: 'Operate',
       key: 'operate',
       align: 'center',
-      width: 180,
+      width: 108,
       render: () => (
-        <Space size={4}>
-          <Button size="small" className="hp-btn-update">Update</Button>
-          <Button size="small" className="hp-btn-mapping">Mapping</Button>
-          <Button size="small" className="hp-btn-withdraw">Withdraw</Button>
+        <Space size={6}>
+          <Tooltip title="Update">
+            <Button
+              size="small"
+              icon={<EditOutlined />}
+              className="hp-btn-update"
+            />
+          </Tooltip>
+          <Tooltip title="Schema Mapping">
+            <Button
+              size="small"
+              icon={<SwapOutlined />}
+              className="hp-btn-mapping"
+            />
+          </Tooltip>
+          <Popconfirm
+            title="Withdraw this API?"
+            description="It will be removed from the repository."
+            okText="Withdraw"
+            okButtonProps={{ danger: true }}
+            cancelText="Cancel"
+          >
+            <Tooltip title="Withdraw">
+              <Button
+                size="small"
+                icon={<DeleteOutlined />}
+                className="hp-btn-withdraw"
+              />
+            </Tooltip>
+          </Popconfirm>
         </Space>
       ),
     },
@@ -252,7 +283,7 @@ const HomePage: React.FC = () => {
               pagination={false}
               bordered
               className="hp-table"
-              scroll={{ x: 900 }}
+              tableLayout="fixed"
             />
           </div>
         </Content>
