@@ -63,6 +63,7 @@ const Login = () => {
               <Button type="link" size="small" onClick={() => navigate("/register")}>
                 Sign Up
               </Button>
+              <Button onClick={() => navigate("/homepage")}>Test</Button>
             </div>
           </Form>
         </div>
