@@ -9,7 +9,6 @@ import {
   Button,
   Alert,
   Spin,
-  Typography,
   Result,
   Radio,
   Tag,
@@ -35,9 +34,9 @@ import {
   parseOpenApiJson,
   parseWsdl,
 } from '../utils/helper';
+import './APIInfoForm.scss';
 
 const { TextArea } = Input;
-const { Text }     = Typography;
 const { Option }   = Select;
 const { Dragger }  = Upload;
 
@@ -64,30 +63,26 @@ interface FieldLabelProps { name: string; auto: boolean; }
 
 const FieldLabel: React.FC<FieldLabelProps> = ({ name, auto }) => (
   <span>
-    {name}{' '}
-    {auto && (
-      <Tag color="green" style={{ fontSize: 11, padding: '0 5px', lineHeight: '18px', marginLeft: 2 }}>
-        Auto
-      </Tag>
-    )}
+    {name}
+    {auto && <Tag className="apif-auto-tag" color="green">Auto</Tag>}
   </span>
 );
 
 interface StageRowProps { title: string; desc: string; stage: StageResult; }
 
 const StageRow: React.FC<StageRowProps> = ({ title, desc, stage }) => (
-  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 0', borderBottom: '1px solid #f0f0f0' }}>
-    {stage.passed
-      ? <CheckCircleFilled style={{ color: '#52c41a', fontSize: 18, marginTop: 2 }} />
-      : <CloseCircleFilled style={{ color: '#ff4d4f', fontSize: 18, marginTop: 2 }} />}
-    <div>
-      <Text strong>{title}</Text>
-      <br />
-      <Text type="secondary" style={{ fontSize: 12 }}>{desc}</Text>
-      <br />
-      <Text style={{ fontSize: 12, color: stage.passed ? '#52c41a' : '#ff4d4f' }}>
+  <div className={`apif-stage-row ${stage.passed ? 'apif-stage-row--pass' : 'apif-stage-row--fail'}`}>
+    <span className="apif-stage-row__icon">
+      {stage.passed
+        ? <CheckCircleFilled style={{ color: '#52c41a' }} />
+        : <CloseCircleFilled style={{ color: '#ff4d4f' }} />}
+    </span>
+    <div className="apif-stage-row__body">
+      <div className="apif-stage-row__title">{title}</div>
+      <div className="apif-stage-row__desc">{desc}</div>
+      <div className={`apif-stage-row__message apif-stage-row__message--${stage.passed ? 'pass' : 'fail'}`}>
         {stage.passed ? '✓ ' : '✗ '}{stage.message}
-      </Text>
+      </div>
     </div>
   </div>
 );
@@ -232,18 +227,19 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
       width={700}
       footer={null}
       destroyOnClose
+      className="apif-modal"
     >
-      <Steps current={current} items={STEP_ITEMS} size="small" style={{ marginBottom: 28 }} />
+      <Steps current={current} items={STEP_ITEMS} size="small" className="apif-steps" />
 
       {/* ── Step 0: Import Spec ────────────────────────────────────────── */}
       {current === 0 && (
-        <div>
-          <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 20 }}>
+        <div className="apif-step">
+          <span className="apif-intro">
             Upload your API specification or provide a hosted URL — fields will be auto-populated from the spec.
-          </Text>
+          </span>
 
-          <div style={{ marginBottom: 18 }}>
-            <div style={{ marginBottom: 6, fontWeight: 500, fontSize: 13 }}>Protocol</div>
+          <div className="apif-section">
+            <div className="apif-section__label">Protocol</div>
             <Radio.Group
               value={protocol}
               onChange={e => { setProtocol(e.target.value as Protocol); setParseError(null); }}
@@ -255,8 +251,8 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
             </Radio.Group>
           </div>
 
-          <div style={{ marginBottom: 18 }}>
-            <div style={{ marginBottom: 6, fontWeight: 500, fontSize: 13 }}>Import Method</div>
+          <div className="apif-section">
+            <div className="apif-section__label">Import Method</div>
             <Radio.Group
               value={importMethod}
               onChange={e => { setImportMethod(e.target.value as ImportMethod); setParseError(null); }}
@@ -268,6 +264,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
 
           {importMethod === 'upload' ? (
             <Dragger
+              className="apif-dragger"
               accept={specAccept}
               maxCount={1}
               fileList={fileList}
@@ -298,11 +295,11 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
           )}
 
           {parsing && (
-            <div style={{ textAlign: 'center', padding: '24px 0' }}>
+            <div className="apif-parsing">
               <Spin indicator={<LoadingOutlined spin />} />
-              <Text type="secondary" style={{ marginLeft: 10, fontSize: 13 }}>
+              <span>
                 {importMethod === 'url' ? 'Fetching and parsing specification…' : 'Parsing specification…'}
-              </Text>
+              </span>
             </div>
           )}
 
@@ -314,7 +311,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
 
       {/* ── Step 1: Review & Edit ──────────────────────────────────────── */}
       {current === 1 && (
-        <div>
+        <div className="apif-step">
           {parsedFields.size > 0 && (
             <Alert
               type="success"
@@ -413,7 +410,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
               rules={[{ required: true, message: 'Please provide a description' }]}
             >
               <TextArea
-                rows={3}
+                rows={2}
                 placeholder="Briefly describe the API's functional purpose within the e-invoicing ecosystem"
               />
             </Form.Item>
@@ -423,11 +420,11 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
 
       {/* ── Step 2: Validation ────────────────────────────────────────── */}
       {current === 2 && (
-        <div>
+        <div className="apif-step">
           {validating && (
-            <div style={{ textAlign: 'center', padding: '48px 0' }}>
+            <div className="apif-validating">
               <Spin indicator={<LoadingOutlined style={{ fontSize: 36 }} spin />} />
-              <p style={{ marginTop: 16, color: '#595959' }}>Running validation pipeline…</p>
+              <span>Running validation pipeline…</span>
             </div>
           )}
           {!validating && validationResult && (
@@ -469,7 +466,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
       )}
 
       {/* ── Footer ────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 24 }}>
+      <div className="apif-footer">
         {current > 0 && !published && (
           <Button onClick={() => setCurrent(c => c - 1)} disabled={validating || parsing}>
             Back
