@@ -1,0 +1,6 @@
+# A Lack of info.version, and paths are empty
+
+openapi: 3.0.3
+info:
+  title: Broken Invoice API
+paths: {}
