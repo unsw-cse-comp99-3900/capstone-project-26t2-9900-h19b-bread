@@ -24,6 +24,7 @@ import {
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import type { TableColumnsType } from 'antd';
+import APIInfoForm from '../../components/APIInfoForm';
 import './Homepage.scss';
 
 const { Header, Sider, Content } = Layout;
@@ -89,7 +90,10 @@ const navItems = [
 const HomePage: React.FC = () => {
   const [selectedKey, setSelectedKey] = useState('publisher');
   const [collapsed, setCollapsed]     = useState(false);
+  const [modalOpen, setModalOpen]     = useState(false);
   const navigate = useNavigate();
+
+  const showModal = () => setModalOpen(true);
 
   const columns: TableColumnsType<ApiRecord> = [
     {
@@ -154,6 +158,7 @@ const HomePage: React.FC = () => {
   ];
 
   return (
+    <>
     <Layout className="hp-root">
       {/* ── Sidebar ── */}
       <Sider
@@ -236,7 +241,7 @@ const HomePage: React.FC = () => {
                   Manage your enterprise e-invoicing APIs submitted to the ecosystem repository
                 </span>
               </div>
-              <Button type="primary" icon={<PlusOutlined />}>
+              <Button type="primary" icon={<PlusOutlined />} onClick={showModal}>
                 Publish New API
               </Button>
             </div>
@@ -253,6 +258,9 @@ const HomePage: React.FC = () => {
         </Content>
       </Layout>
     </Layout>
+
+    <APIInfoForm open={modalOpen} onClose={() => setModalOpen(false)} />
+    </>
   );
 };
 
