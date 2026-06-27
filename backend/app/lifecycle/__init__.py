@@ -1,5 +1,18 @@
-from app.lifecycle.enums import ApiStatus, LifecycleAction
-from app.lifecycle.exceptions import InvalidStatusTransitionError
+from app.lifecycle.enums import (
+    ApiStatus,
+    ApiVersionStatus,
+    LifecycleAction,
+    ValidationOverallStatus,
+    ValidationStage,
+    ValidationStageStatus,
+)
+from app.lifecycle.exceptions import (
+    ApiNotFoundError,
+    CurrentVersionNotFoundError,
+    InvalidStatusTransitionError,
+)
+from app.lifecycle.schemas import LifecycleResult, ValidationResultInput
+from app.lifecycle.service import LifecycleService
 from app.lifecycle.state_machine import (
     ALLOWED_TRANSITIONS,
     can_transition,
@@ -8,9 +21,18 @@ from app.lifecycle.state_machine import (
 
 __all__ = [
     "ALLOWED_TRANSITIONS",
+    "ApiNotFoundError",
     "ApiStatus",
+    "ApiVersionStatus",
+    "CurrentVersionNotFoundError",
     "InvalidStatusTransitionError",
     "LifecycleAction",
+    "LifecycleResult",
+    "LifecycleService",
+    "ValidationOverallStatus",
+    "ValidationResultInput",
+    "ValidationStage",
+    "ValidationStageStatus",
     "can_transition",
     "ensure_transition_allowed",
 ]
