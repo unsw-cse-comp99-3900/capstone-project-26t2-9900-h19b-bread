@@ -1,0 +1,17 @@
+from enum import Enum
+
+
+class ApiStatus(str, Enum):
+    DRAFT = "DRAFT"
+    VALIDATING = "VALIDATING"
+    REJECTED = "REJECTED"
+    PUBLISHED = "PUBLISHED"
+    WITHDRAWN = "WITHDRAWN"
+
+
+class LifecycleAction(str, Enum):
+    SUBMIT = "SUBMIT"
+    RESUBMIT = "RESUBMIT"
+    VALIDATION_PASSED = "VALIDATION_PASSED"
+    VALIDATION_FAILED = "VALIDATION_FAILED"
+    WITHDRAW = "WITHDRAW"
