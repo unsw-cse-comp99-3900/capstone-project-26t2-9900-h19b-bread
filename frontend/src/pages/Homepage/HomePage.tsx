@@ -1,0 +1,298 @@
+import React, { useState } from 'react';
+import {
+  Layout,
+  Menu,
+  Button,
+  Avatar,
+  Table,
+  Tag,
+  Space,
+  Typography,
+  Divider,
+  Tooltip,
+  Popconfirm,
+} from 'antd';
+import {
+  UserOutlined,
+  LogoutOutlined,
+  PlusOutlined,
+  SearchOutlined,
+  PartitionOutlined,
+  CloudUploadOutlined,
+  ApiOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  EditOutlined,
+  SwapOutlined,
+  DeleteOutlined,
+} from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
+import type { TableColumnsType } from 'antd';
+import APIInfoForm from '../../components/APIInfoForm';
+import './Homepage.scss';
+
+const { Header, Sider, Content } = Layout;
+const { Title } = Typography;
+
+interface ApiRecord {
+  key: string;
+  name: string;
+  protocol: 'REST' | 'SOAP';
+  endpoint: string;
+  authMethod: string;
+  category: string;
+  status: 'Published' | 'Rejected' | 'Draft';
+}
+
+const mockData: ApiRecord[] = [
+  {
+    key: '1',
+    name: 'Invoice Creation API',
+    protocol: 'REST',
+    endpoint: 'https://api.acme.com/invoices',
+    authMethod: 'OAuth 2.0',
+    category: 'Invoice Creation',
+    status: 'Published',
+  },
+  {
+    key: '2',
+    name: 'PEPPOL Validation Service',
+    protocol: 'SOAP',
+    endpoint: 'https://svc.acme.com/validate',
+    authMethod: 'mTLS',
+    category: 'Validation',
+    status: 'Rejected',
+  },
+  {
+    key: '3',
+    name: 'Invoice Archive API',
+    protocol: 'REST',
+    endpoint: 'https://api.acme.com/archive',
+    authMethod: 'API Key',
+    category: 'Archiving',
+    status: 'Draft',
+  },
+];
+
+const statusColorMap: Record<string, string> = {
+  Published: 'success',
+  Rejected: 'error',
+  Draft: 'warning',
+};
+
+const protocolColorMap: Record<string, string> = {
+  REST: 'blue',
+  SOAP: 'purple',
+};
+
+const navItems = [
+  { key: 'discovery',   icon: <SearchOutlined />,      label: 'Discovery Service' },
+  { key: 'composition', icon: <PartitionOutlined />,   label: 'Composition Service' },
+  { key: 'publisher',   icon: <CloudUploadOutlined />, label: 'API Publisher' },
+];
+
+const HomePage: React.FC = () => {
+  const [selectedKey, setSelectedKey] = useState('publisher');
+  const [collapsed, setCollapsed]     = useState(false);
+  const [modalOpen, setModalOpen]     = useState(false);
+  const navigate = useNavigate();
+
+  const showModal = () => setModalOpen(true);
+
+  const columns: TableColumnsType<ApiRecord> = [
+    {
+      title: 'API Name',
+      dataIndex: 'name',
+      key: 'name',
+      width: 155,
+      ellipsis: true,
+    },
+    {
+      title: 'Protocol',
+      dataIndex: 'protocol',
+      key: 'protocol',
+      align: 'center',
+      width: 75,
+      render: (protocol: string) => (
+        <Tag color={protocolColorMap[protocol]}>{protocol}</Tag>
+      ),
+    },
+    {
+      title: 'Endpoint URL',
+      dataIndex: 'endpoint',
+      key: 'endpoint',
+      ellipsis: true,
+    },
+    {
+      title: 'Auth Method',
+      dataIndex: 'authMethod',
+      key: 'authMethod',
+      align: 'center',
+      width: 100,
+    },
+    {
+      title: 'Category',
+      dataIndex: 'category',
+      key: 'category',
+      align: 'center',
+      width: 130,
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      align: 'center',
+      width: 88,
+      render: (status: string) => (
+        <Tag color={statusColorMap[status]}>{status}</Tag>
+      ),
+    },
+    {
+      title: 'Operate',
+      key: 'operate',
+      align: 'center',
+      width: 108,
+      render: () => (
+        <Space size={6}>
+          <Tooltip title="Update">
+            <Button
+              size="small"
+              icon={<EditOutlined />}
+              className="hp-btn-update"
+            />
+          </Tooltip>
+          <Tooltip title="Schema Mapping">
+            <Button
+              size="small"
+              icon={<SwapOutlined />}
+              className="hp-btn-mapping"
+            />
+          </Tooltip>
+          <Popconfirm
+            title="Withdraw this API?"
+            description="It will be removed from the repository."
+            okText="Withdraw"
+            okButtonProps={{ danger: true }}
+            cancelText="Cancel"
+          >
+            <Tooltip title="Withdraw">
+              <Button
+                size="small"
+                icon={<DeleteOutlined />}
+                className="hp-btn-withdraw"
+              />
+            </Tooltip>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+
+  return (
+    <>
+    <Layout className="hp-root">
+      {/* ── Sidebar ── */}
+      <Sider
+        className="hp-sider"
+        width={200}
+        collapsedWidth={64}
+        collapsed={collapsed}
+        collapsible={false}
+      >
+        {/* Brand */}
+        <div className={`hp-sider__brand ${collapsed ? 'hp-sider__brand--collapsed' : ''}`}>
+          <div className="hp-sider__brand-icon">
+            <ApiOutlined />
+          </div>
+          {!collapsed && (
+            <span className="hp-sider__brand-name">API Ecosystem</span>
+          )}
+        </div>
+
+        <Divider className="hp-sider__divider" />
+
+        {/* Avatar */}
+        <div className={`hp-sider__avatar-wrap ${collapsed ? 'hp-sider__avatar-wrap--collapsed' : ''}`}>
+          <Avatar
+            size={collapsed ? 36 : 52}
+            icon={<UserOutlined />}
+            className="hp-sider__avatar"
+          />
+          {!collapsed && (
+            <span className="hp-sider__avatar-label">Enterprise User</span>
+          )}
+        </div>
+
+        <Divider className="hp-sider__divider" />
+
+        {/* Nav */}
+        <Menu
+          className="hp-menu"
+          mode="inline"
+          selectedKeys={[selectedKey]}
+          inlineCollapsed={collapsed}
+          onClick={({ key }) => setSelectedKey(key)}
+          items={navItems}
+        />
+
+        {/* Collapse trigger */}
+        <div className="hp-sider__footer">
+          <Tooltip title={collapsed ? 'Expand' : 'Collapse'} placement="right">
+            <button
+              className="hp-sider__toggle"
+              onClick={() => setCollapsed(!collapsed)}
+            >
+              {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            </button>
+          </Tooltip>
+        </div>
+      </Sider>
+
+      <Layout>
+        {/* ── Header ── */}
+        <Header className="hp-header">
+          <Button
+            type="primary"
+            icon={<LogoutOutlined />}
+            onClick={() => navigate('/login')}
+          >
+            Log out
+          </Button>
+        </Header>
+
+        {/* ── Content ── */}
+        <Content className="hp-content">
+          <div className="hp-card">
+            <div className="hp-card__header">
+              <div>
+                <Title level={5} className="hp-card__title">
+                  API Publisher — My Published APIs
+                </Title>
+                <span className="hp-card__desc">
+                  Manage your enterprise e-invoicing APIs submitted to the ecosystem repository
+                </span>
+              </div>
+              <Button type="primary" icon={<PlusOutlined />} onClick={showModal}>
+                Publish New API
+              </Button>
+            </div>
+
+            <Table<ApiRecord>
+              columns={columns}
+              dataSource={mockData}
+              pagination={false}
+              bordered
+              className="hp-table"
+              tableLayout="fixed"
+            />
+          </div>
+        </Content>
+      </Layout>
+    </Layout>
+
+    <APIInfoForm open={modalOpen} onClose={() => setModalOpen(false)} />
+    </>
+  );
+};
+
+export default HomePage;
