@@ -1,8 +1,51 @@
-# E-invoicing API Publisher Database Setup
+# E-Invoice API Ecosystem — API Publisher
 
-This README explains how to recreate the local PostgreSQL database for the API Publisher project.
+A full-stack platform for publishing, validating, and managing enterprise e-invoicing APIs.  
+Built with **React + TypeScript (Vite)** on the frontend and **FastAPI (Python 3.11)** on the backend.
 
-## 1. Start PostgreSQL with Docker
+---
+
+## Project Structure
+
+```
+capstone-project-26t2-9900-h19b-bread/
+├── frontend/                  # React + TypeScript (Vite)
+│   ├── src/
+│   │   ├── pages/             # Route-level page components
+│   │   ├── components/        # Shared UI components
+│   │   ├── services/          # API call functions
+│   │   ├── utils/             # Axios instance, helper utilities
+│   │   └── apidoc/            # Frontend–Backend API contract docs
+│   ├── package.json
+│   └── vite.config.ts
+├── backend/                   # FastAPI (Python 3.11)
+│   ├── app/
+│   │   ├── main.py            # FastAPI entry point
+│   │   ├── routers/           # API routes
+│   │   ├── schemas/           # Pydantic models
+│   │   └── services/          # Business logic
+│   ├── requirements.txt
+│   └── .python-version
+├── 24.6_DATABASE_1stversion.sql  # Database schema + seed data
+└── README.md
+```
+
+---
+
+## Prerequisites
+
+| Tool | Version | Notes |
+|------|---------|-------|
+| Node.js | 18 + | Required for frontend |
+| npm | 9 + | Comes with Node.js |
+| Python | 3.11 | Required for backend |
+| Docker Desktop | latest | Required for PostgreSQL |
+
+---
+
+## 1. Database Setup
+
+### Start PostgreSQL with Docker
 
 Make sure Docker Desktop is running, then execute:
 
@@ -13,18 +56,16 @@ docker run --name sprint1-db \
   -d postgres
 ```
 
-If a container with the same name already exists, start it with:
+If the container already exists, start it with:
 
 ```bash
 docker start sprint1-db
 ```
 
-## 2. Database connection settings
+### Connection Details
 
-Use the following connection details in DBeaver or backend configuration:
-
-| Item | Value |
-|---|---|
+| Field | Value |
+|-------|-------|
 | Database Type | PostgreSQL |
 | Host | localhost |
 | Port | 5432 |
@@ -32,47 +73,117 @@ Use the following connection details in DBeaver or backend configuration:
 | Username | postgres |
 | Password | mysecretpassword |
 
-Recommended connection string:
+Connection string:
 
 ```text
 postgresql://postgres:mysecretpassword@localhost:5432/postgres
 ```
 
-## 3. Run the database schema script in DBeaver
+### Initialize Schema
 
-1. Open DBeaver.
-2. Create a PostgreSQL connection using the settings above.
-3. Open `init_all_tables.sql`.
-4. Run the whole script using `Alt + X` or the `Execute SQL Script` button.
-5. Refresh the database navigator.
-6. Confirm that the tables have been created.
-
-Expected main tables include:
+1. Open DBeaver and connect using the settings above.
+2. Open `24.6_DATABASE_1stversion.sql`.
+3. Run the full script (`Alt + X` or **Execute SQL Script**).
+4. Confirm the following tables are created:
 
 ```text
-enterprise
-app_user
-api_submission
-api_version
-api_specification
-auth_metadata
-validation_run
-validation_result
-schema_mapping
+enterprise · app_user · api_submission · api_version
+api_specification · auth_metadata · validation_run
+validation_result · schema_mapping
 ```
 
-## 4. Notes for backend development
+---
 
-- The script includes `DROP ... CASCADE`, so it can be re-run during local development.
-- The script includes sample data for basic testing.
-- Do not store plain-text passwords in production code. Passwords should be hashed before insertion into `app_user.password_hash`.
-- Do not modify the schema locally without notifying the database owner. Schema changes should be shared through an agreed SQL migration or update script.
+## 2. Backend Setup & Start
 
-## 5. Common issues
+```bash
+cd backend
 
-### Port 5432 is already in use
+# Create and activate virtual environment (Python 3.11 required)
+python3.11 -m venv .venv
 
-Another PostgreSQL instance may already be running. Either stop the existing service or map Docker to another local port, for example:
+# Activate
+# macOS / Linux:
+source .venv/bin/activate
+# Windows:
+.venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Start the development server
+uvicorn app.main:app --reload
+```
+
+The backend will be available at:
+
+| URL | Description |
+|-----|-------------|
+| `http://127.0.0.1:8000` | API base URL |
+| `http://127.0.0.1:8000/docs` | Swagger UI |
+
+---
+
+## 3. Frontend Setup & Start
+
+```bash
+cd frontend
+
+# Install dependencies
+npm install
+
+# Start the development server
+npm run dev
+```
+
+The frontend will be available at:
+
+```text
+http://localhost:5173
+```
+
+> The frontend proxies all API requests to `http://127.0.0.1:8000` by default.  
+> To override, set `VITE_API_BASE_URL` in a `.env` file:
+>
+> ```env
+> VITE_API_BASE_URL=http://127.0.0.1:8000
+> ```
+
+### Available Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start development server |
+| `npm run build` | Production build |
+| `npm run lint` | Run ESLint |
+| `npm run preview` | Preview production build locally |
+
+---
+
+## 4. API Quick Reference
+
+Full contract: [`frontend/src/apidoc/Frontend_Backend_API_Contract_Updated_With_Token.md`](frontend/src/apidoc/Frontend_Backend_API_Contract_Updated_With_Token.md)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/auth/login` | User login, returns mock token |
+| `POST` | `/api/v1/submissions` | Submit API spec + metadata for validation |
+| `POST` | `/api/v1/validation/spec` | Validate spec directly (used internally) |
+
+### Sprint 1 Test Credentials
+
+```text
+Email:    publisher@example.com
+Password: password123
+```
+
+---
+
+## 5. Common Issues
+
+### Port 5432 already in use
+
+Map Docker to a different local port:
 
 ```bash
 docker run --name sprint1-db \
@@ -81,32 +192,28 @@ docker run --name sprint1-db \
   -d postgres
 ```
 
-Then use port `5433` in DBeaver and backend configuration.
+Then update the backend database connection to use port `5433`.
 
-### Connection refused
-
-Check that Docker Desktop is running and the database container is active:
-
-```bash
-docker ps
-```
-
-If the container is stopped, run:
+### Docker container name already exists
 
 ```bash
 docker start sprint1-db
-```
-
-### Container name already exists
-
-Start the existing container:
-
-```bash
-docker start sprint1-db
-```
-
-Or remove and recreate it:
-
-```bash
+# or remove and recreate:
 docker rm sprint1-db
 ```
+
+### Frontend cannot reach backend (CORS / connection refused)
+
+1. Confirm the backend server is running (`uvicorn app.main:app --reload`).
+2. Confirm the virtual environment is activated before running uvicorn.
+3. Check that `VITE_API_BASE_URL` (if set) matches the actual backend URL.
+
+### Python version mismatch
+
+The backend requires Python 3.11. Check with:
+
+```bash
+python --version
+```
+
+If the version is wrong, recreate the virtual environment using `python3.11 -m venv .venv`.

@@ -27,3 +27,7 @@ htmlcov/
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Personal local notes
+TODO.local.md
+docs/validation-api-test-guide.md

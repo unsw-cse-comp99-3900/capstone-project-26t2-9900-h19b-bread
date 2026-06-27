@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+             xmlns:tns="http://example.com/invoice"
+             xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+             name="InvoiceService"
+             targetNamespace="http://example.com/invoice">
+
+  <types>
+    <xsd:schema targetNamespace="http://example.com/invoice">
+      <xsd:element name="CreateInvoiceRequest" type="xsd:string"/>
+      <xsd:element name="CreateInvoiceResponse" type="xsd:string"/>
+    </xsd:schema>
+  </types>
+
+  <message name="CreateInvoiceInput">
+    <part name="body" element="tns:CreateInvoiceRequest"/>
+  </message>
+  <message name="CreateInvoiceOutput">
+    <part name="body" element="tns:CreateInvoiceResponse"/>
+  </message>
+
+  <portType name="InvoicePortType">
+    <operation name="CreateInvoice">
+      <input message="tns:CreateInvoiceInput"/>
+      <output message="tns:CreateInvoiceOutput"/>
+    </operation>
+  </portType>
+
+  <binding name="InvoiceBinding" type="tns:InvoicePortType">
+    <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <operation name="CreateInvoice">
+      <soap:operation soapAction="http://example.com/invoice/CreateInvoice"/>
+      <input>
+        <soap:body use="literal"/>
+      </input>
+      <output>
+        <soap:body use="literal"/>
+      </output>
+    </operation>
+  </binding>
+
+  <service name="InvoiceService">
+    <port name="InvoicePort" binding="tns:InvoiceBinding">
+      <soap:address location="http://example.com/invoice"/>
+    </port>
+  </service>
+
+</definitions>

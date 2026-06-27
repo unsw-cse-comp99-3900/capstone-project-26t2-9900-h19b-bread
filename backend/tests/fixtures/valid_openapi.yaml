@@ -1,0 +1,43 @@
+openapi: 3.0.3
+info:
+  title: Create Invoice API
+  version: 1.0.0
+  description: Sample e-invoicing API for validation testing
+paths:
+  /invoices:
+    post:
+      summary: Create a new invoice
+      operationId: createInvoice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                invoiceNumber:
+                  type: string
+                amount:
+                  type: number
+      responses:
+        "201":
+          description: Invoice created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+    get:
+      summary: List invoices
+      operationId: listInvoices
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object

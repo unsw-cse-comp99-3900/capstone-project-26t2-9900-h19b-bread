@@ -1,0 +1,44 @@
+from enum import Enum
+
+
+class ApiStatus(str, Enum):
+    DRAFT = "DRAFT"
+    VALIDATING = "VALIDATING"
+    REJECTED = "REJECTED"
+    PUBLISHED = "PUBLISHED"
+    WITHDRAWN = "WITHDRAWN"
+
+
+class LifecycleAction(str, Enum):
+    SUBMIT = "SUBMIT"
+    RESUBMIT = "RESUBMIT"
+    VALIDATION_PASSED = "VALIDATION_PASSED"
+    VALIDATION_FAILED = "VALIDATION_FAILED"
+    WITHDRAW = "WITHDRAW"
+
+
+class ApiVersionStatus(str, Enum):
+    DRAFT = "DRAFT"
+    VALIDATING = "VALIDATING"
+    REJECTED = "REJECTED"
+    PUBLISHED = "PUBLISHED"
+    ARCHIVED = "ARCHIVED"
+
+
+class ValidationOverallStatus(str, Enum):
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    PARTIAL = "PARTIAL"
+    RUNNING = "RUNNING"
+
+
+class ValidationStage(str, Enum):
+    SPECIFICATION_VALIDATION = "SPECIFICATION_VALIDATION"
+    DOMAIN_COMPLIANCE_VALIDATION = "DOMAIN_COMPLIANCE_VALIDATION"
+    SECURITY_VALIDATION = "SECURITY_VALIDATION"
+
+
+class ValidationStageStatus(str, Enum):
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    NOT_RUN = "NOT_RUN"
