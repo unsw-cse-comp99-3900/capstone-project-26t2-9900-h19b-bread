@@ -1,3 +1,4 @@
+from contextlib import AbstractContextManager
 from typing import Protocol
 
 from app.lifecycle.enums import (
@@ -11,6 +12,9 @@ from app.lifecycle.enums import (
 
 class LifecycleRepository(Protocol):
     """Persistence contract based on the current PostgreSQL schema."""
+
+    def transaction(self) -> AbstractContextManager[None]:
+        """Run multiple repository operations in one transaction."""
 
     def get_api_status(self, api_id: int) -> ApiStatus | None:
         """Read api_submission.status for the given api_id."""

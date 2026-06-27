@@ -11,6 +11,7 @@ from app.lifecycle.exceptions import (
     CurrentVersionNotFoundError,
     InvalidStatusTransitionError,
 )
+from app.lifecycle.postgres_repository import PostgresLifecycleRepository
 from app.lifecycle.schemas import LifecycleResult, ValidationResultInput
 from app.lifecycle.service import LifecycleService
 from app.lifecycle.state_machine import (
@@ -29,6 +30,7 @@ __all__ = [
     "LifecycleAction",
     "LifecycleResult",
     "LifecycleService",
+    "PostgresLifecycleRepository",
     "ValidationOverallStatus",
     "ValidationResultInput",
     "ValidationStage",

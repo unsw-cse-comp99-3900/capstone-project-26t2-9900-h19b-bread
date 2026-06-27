@@ -16,19 +16,20 @@ class LifecycleService:
         self.repository = repository
 
     def submit_api(self, api_id: int, actor_id: int) -> LifecycleResult:
-        current_status = self._get_required_status(api_id)
-        target_status = ApiStatus.VALIDATING
-        ensure_transition_allowed(current_status, target_status)
+        with self.repository.transaction():
+            current_status = self._get_required_status(api_id)
+            target_status = ApiStatus.VALIDATING
+            ensure_transition_allowed(current_status, target_status)
 
-        version_id = self._get_required_version_id(api_id)
-        action = (
-            LifecycleAction.RESUBMIT
-            if current_status == ApiStatus.REJECTED
-            else LifecycleAction.SUBMIT
-        )
+            version_id = self._get_required_version_id(api_id)
+            action = (
+                LifecycleAction.RESUBMIT
+                if current_status == ApiStatus.REJECTED
+                else LifecycleAction.SUBMIT
+            )
 
-        self.repository.update_api_status(api_id, target_status)
-        self.repository.update_version_status(version_id, ApiVersionStatus.VALIDATING)
+            self.repository.update_api_status(api_id, target_status)
+            self.repository.update_version_status(version_id, ApiVersionStatus.VALIDATING)
 
         return LifecycleResult(
             api_id=api_id,
@@ -43,46 +44,47 @@ class LifecycleService:
         api_id: int,
         validation_result: ValidationResultInput,
     ) -> LifecycleResult:
-        current_status = self._get_required_status(api_id)
-        target_status = (
-            ApiStatus.PUBLISHED if validation_result.passed else ApiStatus.REJECTED
-        )
-        ensure_transition_allowed(current_status, target_status)
+        with self.repository.transaction():
+            current_status = self._get_required_status(api_id)
+            target_status = (
+                ApiStatus.PUBLISHED if validation_result.passed else ApiStatus.REJECTED
+            )
+            ensure_transition_allowed(current_status, target_status)
 
-        version_id = self._get_required_version_id(api_id)
-        action = (
-            LifecycleAction.VALIDATION_PASSED
-            if validation_result.passed
-            else LifecycleAction.VALIDATION_FAILED
-        )
-        overall_status = (
-            ValidationOverallStatus.PASSED
-            if validation_result.passed
-            else ValidationOverallStatus.FAILED
-        )
-        stage_status = (
-            ValidationStageStatus.PASSED
-            if validation_result.passed
-            else ValidationStageStatus.FAILED
-        )
+            version_id = self._get_required_version_id(api_id)
+            action = (
+                LifecycleAction.VALIDATION_PASSED
+                if validation_result.passed
+                else LifecycleAction.VALIDATION_FAILED
+            )
+            overall_status = (
+                ValidationOverallStatus.PASSED
+                if validation_result.passed
+                else ValidationOverallStatus.FAILED
+            )
+            stage_status = (
+                ValidationStageStatus.PASSED
+                if validation_result.passed
+                else ValidationStageStatus.FAILED
+            )
 
-        validation_run_id = self.repository.create_validation_run(
-            api_id=api_id,
-            version_id=version_id,
-            overall_status=overall_status,
-        )
-        self.repository.save_validation_result(
-            validation_run_id=validation_run_id,
-            stage=validation_result.stage,
-            status=stage_status,
-            message=validation_result.message,
-            error_detail=validation_result.error_detail,
-        )
-        self.repository.update_api_status(api_id, target_status)
-        self.repository.update_version_status(
-            version_id,
-            self._to_version_status(target_status),
-        )
+            validation_run_id = self.repository.create_validation_run(
+                api_id=api_id,
+                version_id=version_id,
+                overall_status=overall_status,
+            )
+            self.repository.save_validation_result(
+                validation_run_id=validation_run_id,
+                stage=validation_result.stage,
+                status=stage_status,
+                message=validation_result.message,
+                error_detail=validation_result.error_detail,
+            )
+            self.repository.update_api_status(api_id, target_status)
+            self.repository.update_version_status(
+                version_id,
+                self._to_version_status(target_status),
+            )
 
         return LifecycleResult(
             api_id=api_id,
@@ -103,17 +105,18 @@ class LifecycleService:
         actor_id: int,
         reason: str | None = None,
     ) -> LifecycleResult:
-        current_status = self._get_required_status(api_id)
-        target_status = ApiStatus.WITHDRAWN
-        ensure_transition_allowed(current_status, target_status)
+        with self.repository.transaction():
+            current_status = self._get_required_status(api_id)
+            target_status = ApiStatus.WITHDRAWN
+            ensure_transition_allowed(current_status, target_status)
 
-        version_id = self._get_required_version_id(api_id)
-        self.repository.mark_api_withdrawn(
-            api_id=api_id,
-            actor_id=actor_id,
-            reason=reason,
-        )
-        self.repository.update_version_status(version_id, ApiVersionStatus.ARCHIVED)
+            version_id = self._get_required_version_id(api_id)
+            self.repository.mark_api_withdrawn(
+                api_id=api_id,
+                actor_id=actor_id,
+                reason=reason,
+            )
+            self.repository.update_version_status(version_id, ApiVersionStatus.ARCHIVED)
 
         return LifecycleResult(
             api_id=api_id,
