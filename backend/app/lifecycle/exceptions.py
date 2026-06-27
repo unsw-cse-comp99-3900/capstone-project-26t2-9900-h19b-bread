@@ -5,6 +5,18 @@ class LifecycleError(Exception):
     """Base class for lifecycle domain errors."""
 
 
+class ApiNotFoundError(LifecycleError):
+    def __init__(self, api_id: int) -> None:
+        self.api_id = api_id
+        super().__init__(f"API submission not found: {api_id}")
+
+
+class CurrentVersionNotFoundError(LifecycleError):
+    def __init__(self, api_id: int) -> None:
+        self.api_id = api_id
+        super().__init__(f"Current API version not found for API submission: {api_id}")
+
+
 class InvalidStatusTransitionError(LifecycleError):
     def __init__(self, from_status: ApiStatus, to_status: ApiStatus) -> None:
         self.from_status = from_status
