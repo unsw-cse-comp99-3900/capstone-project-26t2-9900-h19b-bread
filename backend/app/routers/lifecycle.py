@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.lifecycle import (
@@ -35,8 +35,9 @@ class SubmitRequest(BaseModel):
 
 
 class ValidationResultRequest(BaseModel):
-    passed: bool
-    stage: ValidationStage = ValidationStage.SPECIFICATION_VALIDATION
+    passed: bool | None = None
+    overall_status: str | None = None
+    stage: str = ValidationStage.SPECIFICATION_VALIDATION.value
     result_json: dict | None = None
     error_message: str | None = None
 
@@ -74,6 +75,43 @@ def _to_response(result: LifecycleResult) -> LifecycleResponse:
     )
 
 
+def _parse_validation_stage(stage: str) -> ValidationStage:
+    normalized = stage.strip().replace("-", "_").upper()
+    try:
+        return ValidationStage(normalized)
+    except ValueError as exc:
+        allowed = ", ".join(validation_stage.value for validation_stage in ValidationStage)
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unsupported validation stage '{stage}'. Expected one of: {allowed}",
+        ) from exc
+
+
+def _parse_validation_passed(request: ValidationResultRequest) -> bool:
+    if request.passed is not None:
+        return request.passed
+
+    if request.overall_status is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Either 'passed' or 'overall_status' is required.",
+        )
+
+    normalized = request.overall_status.strip().lower()
+    if normalized in {"pass", "passed", "success", "validated", "published"}:
+        return True
+    if normalized in {"fail", "failed", "rejected"}:
+        return False
+
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "Unsupported overall_status "
+            f"'{request.overall_status}'. Expected pass/fail."
+        ),
+    )
+
+
 @router.post("/{api_id}/submit", response_model=LifecycleResponse)
 def submit_api_endpoint(
     api_id: int,
@@ -101,8 +139,8 @@ def validation_result_endpoint(
 ) -> LifecycleResponse:
     message = json.dumps(request.result_json) if request.result_json is not None else None
     validation_result = ValidationResultInput(
-        passed=request.passed,
-        stage=request.stage,
+        passed=_parse_validation_passed(request),
+        stage=_parse_validation_stage(request.stage),
         message=message,
         error_detail=request.error_message,
     )

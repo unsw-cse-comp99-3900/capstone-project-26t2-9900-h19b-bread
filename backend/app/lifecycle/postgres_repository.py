@@ -14,6 +14,10 @@ from app.lifecycle.enums import (
 )
 
 
+def _to_api_status(value: object) -> ApiStatus:
+    return ApiStatus(str(value).strip().upper())
+
+
 class PostgresLifecycleRepository:
     def __init__(
         self,
@@ -55,7 +59,7 @@ class PostgresLifecycleRepository:
 
         if row is None:
             return None
-        return ApiStatus(row["status"])
+        return _to_api_status(row["status"])
 
     def get_api_updated_at(self, api_id: int) -> datetime | None:
         with self._connection() as connection:
