@@ -1,10 +1,33 @@
-import { Button, Form, Input, Typography } from "antd";
+import { useState } from "react";
+import { Button, Form, Input, Typography, message } from "antd";
 import { UserOutlined, LockOutlined, ApiOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
+import { login } from "../../services/login";
+import type { LoginRequest } from "../../services/login";
 import "./Login.scss";
 
 const Login = () => {
   const navigate = useNavigate();
+  const [loading, setLoading] = useState(false);
+
+  const onFinish = async (values: LoginRequest) => {
+    setLoading(true);
+    try {
+      const res = await login(values);
+      if (res.status === 'success' && res.token) {
+        localStorage.setItem('token', res.token);
+        if (res.user) localStorage.setItem('user', JSON.stringify(res.user));
+        message.success(res.message || 'Login successful');
+        navigate('/homepage');
+      } else {
+        message.error(res.message || 'Invalid email or password.');
+      }
+    } catch {
+      // HTTP-level errors are already handled by the request interceptor
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="login-root">
@@ -27,7 +50,13 @@ const Login = () => {
             </span>
           </div>
 
-          <Form name="login" autoComplete="off" layout="vertical" size="large">
+          <Form
+            name="login"
+            autoComplete="off"
+            layout="vertical"
+            size="large"
+            onFinish={onFinish}
+          >
             <Form.Item
               label="Email"
               name="email"
@@ -51,7 +80,7 @@ const Login = () => {
             </Form.Item>
 
             <Form.Item style={{ marginBottom: 12 }}>
-              <Button type="primary" htmlType="submit" block>
+              <Button type="primary" htmlType="submit" block loading={loading}>
                 Sign In
               </Button>
             </Form.Item>
@@ -63,7 +92,6 @@ const Login = () => {
               <Button type="link" size="small" onClick={() => navigate("/register")}>
                 Sign Up
               </Button>
-              <Button onClick={() => navigate("/homepage")}>Test</Button>
             </div>
           </Form>
         </div>
