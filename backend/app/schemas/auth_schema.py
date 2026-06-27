@@ -15,5 +15,6 @@ class UserInfo(BaseModel):
 
 class LoginResponse(BaseModel):
     status: str
+    token: str | None = None
     user: UserInfo | None = None
     message: str
