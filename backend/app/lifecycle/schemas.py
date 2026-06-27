@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 from app.lifecycle.enums import (
     ApiStatus,
@@ -15,6 +16,7 @@ class LifecycleResult:
     action: LifecycleAction | None = None
     version_id: int | None = None
     validation_run_id: int | None = None
+    updated_at: datetime | None = None
 
 
 @dataclass(frozen=True)

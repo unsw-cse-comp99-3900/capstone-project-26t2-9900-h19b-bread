@@ -1,5 +1,6 @@
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
+from datetime import datetime
 
 from psycopg import Connection
 
@@ -55,6 +56,23 @@ class PostgresLifecycleRepository:
         if row is None:
             return None
         return ApiStatus(row["status"])
+
+    def get_api_updated_at(self, api_id: int) -> datetime | None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT updated_at
+                    FROM api_submission
+                    WHERE api_id = %s
+                    """,
+                    (api_id,),
+                )
+                row = cursor.fetchone()
+
+        if row is None:
+            return None
+        return row["updated_at"]
 
     def update_api_status(self, api_id: int, status: ApiStatus) -> None:
         with self._connection() as connection:

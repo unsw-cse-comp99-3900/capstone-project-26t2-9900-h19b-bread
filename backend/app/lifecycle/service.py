@@ -30,6 +30,7 @@ class LifecycleService:
 
             self.repository.update_api_status(api_id, target_status)
             self.repository.update_version_status(version_id, ApiVersionStatus.VALIDATING)
+            updated_at = self.repository.get_api_updated_at(api_id)
 
         return LifecycleResult(
             api_id=api_id,
@@ -37,6 +38,7 @@ class LifecycleService:
             action=action,
             message="API submitted for validation.",
             version_id=version_id,
+            updated_at=updated_at,
         )
 
     def handle_validation_result(
@@ -85,6 +87,7 @@ class LifecycleService:
                 version_id,
                 self._to_version_status(target_status),
             )
+            updated_at = self.repository.get_api_updated_at(api_id)
 
         return LifecycleResult(
             api_id=api_id,
@@ -97,6 +100,7 @@ class LifecycleService:
             ),
             version_id=version_id,
             validation_run_id=validation_run_id,
+            updated_at=updated_at,
         )
 
     def withdraw_api(
@@ -117,6 +121,7 @@ class LifecycleService:
                 reason=reason,
             )
             self.repository.update_version_status(version_id, ApiVersionStatus.ARCHIVED)
+            updated_at = self.repository.get_api_updated_at(api_id)
 
         return LifecycleResult(
             api_id=api_id,
@@ -124,14 +129,19 @@ class LifecycleService:
             action=LifecycleAction.WITHDRAW,
             message="API withdrawn successfully.",
             version_id=version_id,
+            updated_at=updated_at,
         )
 
     def get_status(self, api_id: int) -> LifecycleResult:
-        status = self._get_required_status(api_id)
+        with self.repository.transaction():
+            status = self._get_required_status(api_id)
+            updated_at = self.repository.get_api_updated_at(api_id)
+
         return LifecycleResult(
             api_id=api_id,
             status=status,
             message="API status loaded successfully.",
+            updated_at=updated_at,
         )
 
     def _get_required_status(self, api_id: int) -> ApiStatus:
