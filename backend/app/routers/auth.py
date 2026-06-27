@@ -10,6 +10,7 @@ def login(request: LoginRequest):
     if request.email == "publisher@example.com" and request.password == "password123":
         return LoginResponse(
             status="success",
+            token="mock-token-publisher-user-001",
             user=UserInfo(
                 user_id="user_001",
                 email=request.email,
@@ -21,6 +22,7 @@ def login(request: LoginRequest):
 
     return LoginResponse(
         status="fail",
+        token=None,
         user=None,
         message="Invalid email or password."
     )
