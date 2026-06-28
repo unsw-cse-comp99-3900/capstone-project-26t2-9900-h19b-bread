@@ -18,3 +18,17 @@ class LoginResponse(BaseModel):
     token: str | None = None
     user: UserInfo | None = None
     message: str
+
+
+class RegisterRequest(BaseModel):
+    enterprise_id: int = 1
+    name: str
+    email: str
+    password: str
+    role: str = "PUBLISHER"
+
+
+class RegisterResponse(BaseModel):
+    status: str
+    user: UserInfo | None = None
+    message: str
