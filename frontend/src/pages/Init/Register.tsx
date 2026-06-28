@@ -1,4 +1,5 @@
-import { Button, Form, Input, Typography } from "antd";
+import { useState } from "react";
+import { Button, Form, Input, Typography, message } from "antd";
 import {
   UserOutlined,
   LockOutlined,
@@ -6,10 +7,50 @@ import {
   ApiOutlined,
 } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
+import { useDispatch } from "react-redux";
+import { registerUser } from "../../services/register";
+import { login } from "../../services/login";
+import { setCredentials } from "../../store/authSlice";
+import type { AppDispatch } from "../../store";
 import "./Login.scss";
+
+interface RegisterFormValues {
+  name:            string;
+  email:           string;
+  password:        string;
+  confirmPassword: string;
+}
 
 const Register = () => {
   const navigate = useNavigate();
+  const dispatch = useDispatch<AppDispatch>();
+  const [loading, setLoading] = useState(false);
+
+  const onFinish = async (values: RegisterFormValues) => {
+    setLoading(true);
+    try {
+      const res = await registerUser({
+        name:     values.name,
+        email:    values.email,
+        password: values.password,
+      });
+
+      if (res.status === 'success') {
+        const loginRes = await login({ email: values.email, password: values.password });
+        if (loginRes.status === 'success' && loginRes.token && loginRes.user) {
+          dispatch(setCredentials({ token: loginRes.token, user: loginRes.user }));
+        }
+        message.success('Account created successfully.');
+        navigate('/homepage');
+      } else {
+        message.error(res.message || 'Registration failed.');
+      }
+    } catch {
+      // HTTP-level errors (409, 400) are handled by the request interceptor
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="login-root">
@@ -37,6 +78,7 @@ const Register = () => {
             autoComplete="off"
             layout="vertical"
             size="large"
+            onFinish={onFinish}
           >
             <Form.Item
               label="Name"
@@ -54,10 +96,7 @@ const Register = () => {
               name="email"
               rules={[
                 { required: true, message: "Please input your email!" },
-                {
-                  type: "email",
-                  message: "Please enter a valid email address!",
-                },
+                { type: "email", message: "Please enter a valid email address!" },
               ]}
             >
               <Input prefix={<MailOutlined />} placeholder="your@email.com" />
@@ -102,7 +141,7 @@ const Register = () => {
             </Form.Item>
 
             <Form.Item style={{ marginBottom: 12 }}>
-              <Button type="primary" htmlType="submit" block>
+              <Button type="primary" htmlType="submit" block loading={loading}>
                 Sign Up
               </Button>
             </Form.Item>
