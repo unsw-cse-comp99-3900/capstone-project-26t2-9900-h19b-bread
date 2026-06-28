@@ -3,7 +3,8 @@ import type { AxiosError, AxiosResponse, InternalAxiosRequestConfig } from "axio
 import { message } from "antd";
 
 interface ApiError {
-  error: string;
+  error?: string;
+  detail?: string;   // FastAPI HTTPException format
   message?: string;
   statusCode?: number;
 }
@@ -32,7 +33,7 @@ request.interceptors.response.use(
   (error: AxiosError<ApiError>) => {
     if (error.response) {
       const { data } = error.response;
-      const errorMessage = data?.error ?? "An error occurred";
+      const errorMessage = data?.detail ?? data?.error ?? "An error occurred";
       message.error(errorMessage, 3);
       return Promise.reject(data);
     }

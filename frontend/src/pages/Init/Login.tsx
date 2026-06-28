@@ -2,21 +2,24 @@ import { useState } from "react";
 import { Button, Form, Input, Typography, message } from "antd";
 import { UserOutlined, LockOutlined, ApiOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
+import { useDispatch } from "react-redux";
 import { login } from "../../services/login";
 import type { LoginRequest } from "../../services/login";
+import { setCredentials } from "../../store/authSlice";
+import type { AppDispatch } from "../../store";
 import "./Login.scss";
 
 const Login = () => {
-  const navigate = useNavigate();
+  const navigate  = useNavigate();
+  const dispatch  = useDispatch<AppDispatch>();
   const [loading, setLoading] = useState(false);
 
   const onFinish = async (values: LoginRequest) => {
     setLoading(true);
     try {
       const res = await login(values);
-      if (res.status === 'success' && res.token) {
-        localStorage.setItem('token', res.token);
-        if (res.user) localStorage.setItem('user', JSON.stringify(res.user));
+      if (res.status === 'success' && res.token && res.user) {
+        dispatch(setCredentials({ token: res.token, user: res.user }));
         message.success(res.message || 'Login successful');
         navigate('/homepage');
       } else {
