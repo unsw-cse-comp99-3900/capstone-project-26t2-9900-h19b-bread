@@ -21,25 +21,61 @@ def hash_password(password: str) -> str:
 
 @router.post("/login", response_model=LoginResponse)
 def login(request: LoginRequest):
-    # Sprint 1 mock login for frontend integration
-    if request.email == "publisher@example.com" and request.password == "password123":
+    password_hash = hash_password(request.password)
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    user_id,
+                    enterprise_id,
+                    email,
+                    role,
+                    status,
+                    password_hash
+                FROM app_user
+                WHERE email = %s;
+                """,
+                (request.email,),
+            )
+
+            row = cursor.fetchone()
+
+    if row is None:
         return LoginResponse(
-            status="success",
-            token="mock-token-publisher-user-001",
-            user=UserInfo(
-                user_id="user_001",
-                email=request.email,
-                role="publisher",
-                enterprise_id="ent_001",
-            ),
-            message="Login successful."
+            status="fail",
+            token=None,
+            user=None,
+            message="Invalid email or password."
+        )
+
+    if row["status"] != "ACTIVE":
+        return LoginResponse(
+            status="fail",
+            token=None,
+            user=None,
+            message="User account is not active."
+        )
+
+    if row["password_hash"] != password_hash:
+        return LoginResponse(
+            status="fail",
+            token=None,
+            user=None,
+            message="Invalid email or password."
         )
 
     return LoginResponse(
-        status="fail",
-        token=None,
-        user=None,
-        message="Invalid email or password."
+        status="success",
+        token=f"mock-token-user-{row['user_id']}",
+        user=UserInfo(
+            user_id=str(row["user_id"]),
+            email=row["email"],
+            role=row["role"],
+            enterprise_id=str(row["enterprise_id"]),
+        ),
+        message="Login successful."
     )
 
 
