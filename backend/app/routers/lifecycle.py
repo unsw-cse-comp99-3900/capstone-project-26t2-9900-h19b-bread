@@ -20,7 +20,10 @@ router = APIRouter(prefix="/apis", tags=["lifecycle"])
 
 try:
     from app.core.security import require_role
-except ImportError:
+except ModuleNotFoundError as exc:
+    if exc.name != "app.core.security":
+        raise
+
     def get_lifecycle_actor() -> dict | None:
         return None
 else:
