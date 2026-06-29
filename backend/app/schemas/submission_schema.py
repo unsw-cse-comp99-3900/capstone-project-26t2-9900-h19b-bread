@@ -23,7 +23,10 @@ class SubmissionResponse(BaseModel):
     status: str
     validation: ValidationResponse
 
-
+class DraftSubmissionResponse(BaseModel):
+    submission_id: str
+    status: str
+    
 class SubmissionListItem(BaseModel):
     api_id: int
     api_name: str
