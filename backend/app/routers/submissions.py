@@ -1,10 +1,14 @@
 import json
-
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.database import get_connection
 from app.core.security import require_role
-from app.schemas.submission_schema import SubmissionRequest, SubmissionResponse
+from app.schemas.submission_schema import (
+    SubmissionRequest,
+    SubmissionResponse,
+    SubmissionListItem,
+)
 from app.schemas.validation_schema import ValidationRequest
 from app.services.validation_service import validate_specification
 
@@ -296,4 +300,56 @@ def create_submission(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to create submission: {exc}",
+        )
+@router.get("", response_model=List[SubmissionListItem])
+def list_submissions(
+    current_user: dict = Depends(require_role("PUBLISHER", "ADMIN")),
+) -> list[SubmissionListItem]:
+    enterprise_id = current_user["enterprise_id"]
+
+    try:
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        api_id,
+                        api_name,
+                        endpoint_url,
+                        protocol_type,
+                        input_format,
+                        output_format,
+                        capability_category,
+                        status,
+                        created_at,
+                        updated_at
+                    FROM api_submission
+                    WHERE enterprise_id = %s
+                    ORDER BY api_id DESC;
+                    """,
+                    (enterprise_id,),
+                )
+
+                rows = cursor.fetchall()
+
+        return [
+            SubmissionListItem(
+                api_id=row["api_id"],
+                api_name=row["api_name"],
+                endpoint_url=row["endpoint_url"],
+                protocol_type=row["protocol_type"],
+                input_format=row["input_format"],
+                output_format=row["output_format"],
+                capability_category=row["capability_category"],
+                status=row["status"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            )
+            for row in rows
+        ]
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to list submissions: {exc}",
         )

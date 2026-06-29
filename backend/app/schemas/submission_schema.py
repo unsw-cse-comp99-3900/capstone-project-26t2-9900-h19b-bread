@@ -1,5 +1,8 @@
-from pydantic import BaseModel
+from datetime import datetime
 from typing import Optional
+
+from pydantic import BaseModel
+
 from app.schemas.validation_schema import ValidationResponse
 
 
@@ -19,3 +22,16 @@ class SubmissionResponse(BaseModel):
     submission_id: str
     status: str
     validation: ValidationResponse
+
+
+class SubmissionListItem(BaseModel):
+    api_id: int
+    api_name: str
+    endpoint_url: str
+    protocol_type: str
+    input_format: str
+    output_format: str
+    capability_category: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
