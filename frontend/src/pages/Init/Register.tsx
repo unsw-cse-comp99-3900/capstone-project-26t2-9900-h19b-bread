@@ -39,9 +39,12 @@ const Register = () => {
         const loginRes = await login({ email: values.email, password: values.password });
         if (loginRes.status === 'success' && loginRes.token && loginRes.user) {
           dispatch(setCredentials({ token: loginRes.token, user: loginRes.user }));
+          message.success('Account created successfully.');
+          navigate('/homepage');
+        } else {
+          message.success('Account created. Please sign in.');
+          navigate('/login');
         }
-        message.success('Account created successfully.');
-        navigate('/homepage');
       } else {
         message.error(res.message || 'Registration failed.');
       }

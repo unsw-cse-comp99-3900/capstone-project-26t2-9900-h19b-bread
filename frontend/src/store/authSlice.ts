@@ -1,29 +1,29 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
-
-export interface AuthUser {
-  user_id:       string;
-  enterprise_id: string;
-  email:         string;
-  role:          string;
-}
+import type { User } from '../types/user';
 
 interface AuthState {
   token: string | null;
-  user:  AuthUser | null;
+  user:  User | null;
 }
 
 function loadFromStorage(): AuthState {
-  return {
-    token: localStorage.getItem('token'),
-    user:  JSON.parse(localStorage.getItem('user') ?? 'null'),
-  };
+  try {
+    return {
+      token: localStorage.getItem('token'),
+      user:  JSON.parse(localStorage.getItem('user') ?? 'null') as User | null,
+    };
+  } catch {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    return { token: null, user: null };
+  }
 }
 
 const authSlice = createSlice({
   name: 'auth',
   initialState: loadFromStorage(),
   reducers: {
-    setCredentials(state, action: PayloadAction<{ token: string; user: AuthUser }>) {
+    setCredentials(state, action: PayloadAction<{ token: string; user: User }>) {
       state.token = action.payload.token;
       state.user  = action.payload.user;
       localStorage.setItem('token', action.payload.token);

@@ -11,6 +11,7 @@ import {
   Divider,
   Tooltip,
   Popconfirm,
+  message,
 } from 'antd';
 import {
   UserOutlined,
@@ -25,59 +26,71 @@ import {
   EditOutlined,
   SwapOutlined,
   DeleteOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  ClockCircleOutlined,
+  MinusCircleOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import { useSelector, useDispatch } from 'react-redux';
 import type { TableColumnsType } from 'antd';
 import APIInfoForm from '../../components/APIInfoForm';
+import type { PublishedInfo } from '../../components/APIInfoForm';
+import { logout } from '../../store/authSlice';
+import type { RootState, AppDispatch } from '../../store';
+import { withdrawApi } from '../../services/lifecycle';
 import './Homepage.scss';
 
 const { Header, Sider, Content } = Layout;
 const { Title } = Typography;
 
+type ApiStatus = 'Published' | 'Rejected' | 'Draft' | 'Withdrawn';
+
 interface ApiRecord {
-  key: string;
-  name: string;
-  protocol: 'REST' | 'SOAP';
-  endpoint: string;
+  key:        string;
+  name:       string;
+  protocol:   'REST' | 'SOAP';
+  endpoint:   string;
   authMethod: string;
-  category: string;
-  status: 'Published' | 'Rejected' | 'Draft';
+  category:   string;
+  status:     ApiStatus;
 }
 
-const mockData: ApiRecord[] = [
+const initialData: ApiRecord[] = [
   {
-    key: '1',
-    name: 'Invoice Creation API',
-    protocol: 'REST',
-    endpoint: 'https://api.acme.com/invoices',
+    key:        '1',
+    name:       'Invoice Creation API',
+    protocol:   'REST',
+    endpoint:   'https://api.acme.com/invoices',
     authMethod: 'OAuth 2.0',
-    category: 'Invoice Creation',
-    status: 'Published',
+    category:   'Invoice Creation',
+    status:     'Published',
   },
   {
-    key: '2',
-    name: 'PEPPOL Validation Service',
-    protocol: 'SOAP',
-    endpoint: 'https://svc.acme.com/validate',
+    key:        '2',
+    name:       'PEPPOL Validation Service',
+    protocol:   'SOAP',
+    endpoint:   'https://svc.acme.com/validate',
     authMethod: 'mTLS',
-    category: 'Validation',
-    status: 'Rejected',
+    category:   'Validation',
+    status:     'Rejected',
   },
   {
-    key: '3',
-    name: 'Invoice Archive API',
-    protocol: 'REST',
-    endpoint: 'https://api.acme.com/archive',
+    key:        '3',
+    name:       'Invoice Archive API',
+    protocol:   'REST',
+    endpoint:   'https://api.acme.com/archive',
     authMethod: 'API Key',
-    category: 'Archiving',
-    status: 'Draft',
+    category:   'Archiving',
+    status:     'Draft',
   },
 ];
 
-const statusColorMap: Record<string, string> = {
-  Published: 'success',
-  Rejected: 'error',
-  Draft: 'warning',
+const statusConfig: Record<ApiStatus, { color: string; icon: React.ReactNode }> = {
+  Published: { color: 'success', icon: <CheckCircleOutlined /> },
+  Rejected:  { color: 'error',   icon: <CloseCircleOutlined /> },
+  Draft:     { color: 'warning', icon: <ClockCircleOutlined /> },
+  Withdrawn: { color: 'default', icon: <MinusCircleOutlined /> },
 };
 
 const protocolColorMap: Record<string, string> = {
@@ -95,64 +108,125 @@ const HomePage: React.FC = () => {
   const [selectedKey, setSelectedKey] = useState('publisher');
   const [collapsed, setCollapsed]     = useState(false);
   const [modalOpen, setModalOpen]     = useState(false);
-  const navigate = useNavigate();
+  const [tableData, setTableData]     = useState<ApiRecord[]>(initialData);
+  const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
 
-  const showModal = () => setModalOpen(true);
+  const navigate = useNavigate();
+  const dispatch = useDispatch<AppDispatch>();
+  const user     = useSelector((s: RootState) => s.auth.user);
+
+  const handleLogout = () => {
+    dispatch(logout());
+    navigate('/login');
+  };
+
+  const handleWithdraw = async (record: ApiRecord) => {
+    if (!user) return;
+    setWithdrawingId(record.key);
+    try {
+      await withdrawApi(record.key, {
+        actor_id: Number(user.user_id),
+        reason:   'Withdrawn by publisher',
+      });
+      setTableData(prev =>
+        prev.map(r => r.key === record.key ? { ...r, status: 'Withdrawn' } : r)
+      );
+      message.success(`"${record.name}" has been withdrawn.`);
+    } catch {
+      // error already shown by request interceptor
+    } finally {
+      setWithdrawingId(null);
+    }
+  };
+
+  const handlePublished = (info: PublishedInfo) => {
+    setTableData(prev => [
+      ...prev,
+      {
+        key:        info.submissionId,
+        name:       info.name,
+        protocol:   info.protocol,
+        endpoint:   info.endpoint,
+        authMethod: info.authMethod,
+        category:   info.category,
+        status:     'Published',
+      },
+    ]);
+  };
 
   const columns: TableColumnsType<ApiRecord> = [
     {
-      title: 'API Name',
+      title:     'API Name',
       dataIndex: 'name',
-      key: 'name',
-      width: 155,
-      ellipsis: true,
+      key:       'name',
+      width:     180,
+      ellipsis:  { showTitle: false },
+      render: (name: string) => (
+        <Tooltip title={name} placement="topLeft">
+          <span style={{ cursor: 'default' }}>{name}</span>
+        </Tooltip>
+      ),
     },
     {
-      title: 'Protocol',
+      title:     'Protocol',
       dataIndex: 'protocol',
-      key: 'protocol',
-      align: 'center',
-      width: 75,
+      key:       'protocol',
+      align:     'center',
+      width:     96,
       render: (protocol: string) => (
         <Tag color={protocolColorMap[protocol]}>{protocol}</Tag>
       ),
     },
     {
-      title: 'Endpoint URL',
+      title:     'Endpoint URL',
       dataIndex: 'endpoint',
-      key: 'endpoint',
-      ellipsis: true,
-    },
-    {
-      title: 'Auth Method',
-      dataIndex: 'authMethod',
-      key: 'authMethod',
-      align: 'center',
-      width: 100,
-    },
-    {
-      title: 'Category',
-      dataIndex: 'category',
-      key: 'category',
-      align: 'center',
-      width: 130,
-    },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      key: 'status',
-      align: 'center',
-      width: 88,
-      render: (status: string) => (
-        <Tag color={statusColorMap[status]}>{status}</Tag>
+      key:       'endpoint',
+      ellipsis:  { showTitle: false },
+      render: (endpoint: string) => (
+        <Tooltip title={endpoint} placement="topLeft">
+          <span style={{ cursor: 'default' }}>{endpoint}</span>
+        </Tooltip>
       ),
     },
     {
-      title: 'Operate',
-      key: 'operate',
-      align: 'center',
-      width: 108,
-      render: () => (
+      title:     'Auth Method',
+      dataIndex: 'authMethod',
+      key:       'authMethod',
+      align:     'center',
+      width:     110,
+    },
+    {
+      title:     'Category',
+      dataIndex: 'category',
+      key:       'category',
+      align:     'center',
+      width:     130,
+    },
+    {
+      title:     'Status',
+      dataIndex: 'status',
+      key:       'status',
+      align:     'center',
+      width:     120,
+      render: (status: ApiStatus) => {
+        const { color, icon } = statusConfig[status];
+        return (
+          <Tag
+            icon={icon}
+            color={color}
+            style={{ fontWeight: 500, fontSize: 12 }}
+          >
+            {status}
+          </Tag>
+        );
+      },
+    },
+    {
+      title:  'Operate',
+      key:    'operate',
+      align:  'center',
+      width:  108,
+      render: (_, record) => (
         <Space size={6}>
           <Tooltip title="Update">
             <Button
@@ -174,12 +248,16 @@ const HomePage: React.FC = () => {
             okText="Withdraw"
             okButtonProps={{ danger: true }}
             cancelText="Cancel"
+            disabled={record.status === 'Withdrawn'}
+            onConfirm={() => handleWithdraw(record)}
           >
-            <Tooltip title="Withdraw">
+            <Tooltip title={record.status === 'Withdrawn' ? 'Already withdrawn' : 'Withdraw'}>
               <Button
                 size="small"
                 icon={<DeleteOutlined />}
                 className="hp-btn-withdraw"
+                loading={withdrawingId === record.key}
+                disabled={record.status === 'Withdrawn'}
               />
             </Tooltip>
           </Popconfirm>
@@ -219,7 +297,9 @@ const HomePage: React.FC = () => {
             className="hp-sider__avatar"
           />
           {!collapsed && (
-            <span className="hp-sider__avatar-label">Enterprise User</span>
+            <span className="hp-sider__avatar-label">
+              {user?.email ?? 'Enterprise User'}
+            </span>
           )}
         </div>
 
@@ -254,7 +334,7 @@ const HomePage: React.FC = () => {
           <Button
             type="primary"
             icon={<LogoutOutlined />}
-            onClick={() => navigate('/login')}
+            onClick={handleLogout}
           >
             Log out
           </Button>
@@ -272,14 +352,14 @@ const HomePage: React.FC = () => {
                   Manage your enterprise e-invoicing APIs submitted to the ecosystem repository
                 </span>
               </div>
-              <Button type="primary" icon={<PlusOutlined />} onClick={showModal}>
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
                 Publish New API
               </Button>
             </div>
 
             <Table<ApiRecord>
               columns={columns}
-              dataSource={mockData}
+              dataSource={tableData}
               pagination={false}
               bordered
               className="hp-table"
@@ -290,7 +370,11 @@ const HomePage: React.FC = () => {
       </Layout>
     </Layout>
 
-    <APIInfoForm open={modalOpen} onClose={() => setModalOpen(false)} />
+    <APIInfoForm
+      open={modalOpen}
+      onClose={() => setModalOpen(false)}
+      onPublished={handlePublished}
+    />
     </>
   );
 };
