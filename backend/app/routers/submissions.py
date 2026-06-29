@@ -1,21 +1,60 @@
 import json
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException
+from urllib.parse import urlparse
+from urllib.request import urlopen
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from app.core.database import get_connection
 from app.core.security import require_role
-
 from app.schemas.submission_schema import (
     DraftSubmissionResponse,
     SubmissionListItem,
     SubmissionRequest,
     SubmissionResponse,
+    SubmissionUrlImportRequest,
 )
 from app.schemas.validation_schema import ValidationRequest
 from app.services.validation_service import validate_specification
-
 router = APIRouter(prefix="/submissions", tags=["submissions"])
+MAX_SPEC_SIZE_BYTES = 5 * 1024 * 1024
 
+
+def read_spec_from_url(spec_url: str) -> str:
+    parsed_url = urlparse(spec_url)
+
+    if parsed_url.scheme not in {"http", "https"}:
+        raise HTTPException(
+            status_code=400,
+            detail="spec_url must use http or https.",
+        )
+
+    try:
+        with urlopen(spec_url, timeout=10) as response:
+            content = response.read(MAX_SPEC_SIZE_BYTES + 1)
+
+        if len(content) > MAX_SPEC_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="Specification file is too large. Maximum size is 5MB.",
+            )
+
+        return content.decode("utf-8")
+
+    except HTTPException:
+        raise
+
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=400,
+            detail="Specification content must be valid UTF-8 text.",
+        )
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to import specification from URL: {exc}",
+        )
 
 def to_plain_value(value):
     if hasattr(value, "value"):
@@ -480,3 +519,72 @@ def save_draft(
             status_code=500,
             detail=f"Failed to save draft: {exc}",
         )
+@router.post("/import-url", response_model=SubmissionResponse)
+def import_submission_spec_from_url(
+    request: SubmissionUrlImportRequest,
+    current_user: dict = Depends(require_role("PUBLISHER", "ADMIN")),
+) -> SubmissionResponse:
+    spec_content = read_spec_from_url(str(request.spec_url))
+
+    submission_request = SubmissionRequest(
+        api_name=request.api_name,
+        endpoint_url=request.endpoint_url,
+        protocol=request.protocol,
+        input_format=request.input_format,
+        output_format=request.output_format,
+        auth_method=request.auth_method,
+        description=request.description,
+        capability_category=request.capability_category,
+        spec_content=spec_content,
+    )
+
+    return create_submission(
+        request=submission_request,
+        current_user=current_user,
+    )
+@router.post("/upload", response_model=SubmissionResponse)
+async def upload_submission_spec(
+    api_name: str = Form(...),
+    endpoint_url: str = Form(...),
+    protocol: str = Form(...),
+    input_format: str = Form(...),
+    output_format: str = Form(...),
+    auth_method: str = Form(...),
+    capability_category: str = Form(...),
+    description: str | None = Form(None),
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_role("PUBLISHER", "ADMIN")),
+) -> SubmissionResponse:
+    file_content = await file.read()
+
+    if len(file_content) > MAX_SPEC_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Specification file is too large. Maximum size is 5MB.",
+        )
+
+    try:
+        spec_content = file_content.decode("utf-8")
+
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=400,
+            detail="Specification file must be valid UTF-8 text.",
+        )
+
+    request = SubmissionRequest(
+        api_name=api_name,
+        endpoint_url=endpoint_url,
+        protocol=protocol,
+        input_format=input_format,
+        output_format=output_format,
+        auth_method=auth_method,
+        description=description,
+        capability_category=capability_category,
+        spec_content=spec_content,
+    )
+
+    return create_submission(
+        request=request,
+        current_user=current_user,
+    )
