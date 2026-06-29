@@ -12,6 +12,7 @@ import {
   Result,
   Radio,
   Tag,
+  message,
 } from 'antd';
 import type { UploadFile } from 'antd';
 import {
@@ -34,6 +35,9 @@ import {
   parseOpenApiJson,
   parseWsdl,
 } from '../utils/helper';
+import { createSubmission } from '../services/submission';
+import type { SubmissionApiResponse, SubmissionRequest } from '../services/submission';
+import type { ValidationApiResponse } from '../services/validation';
 import './APIInfoForm.scss';
 
 const { TextArea } = Input;
@@ -42,9 +46,19 @@ const { Dragger }  = Upload;
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
+export interface PublishedInfo {
+  submissionId: string;
+  name:         string;
+  protocol:     Protocol;
+  endpoint:     string;
+  authMethod:   string;
+  category:     string;
+}
+
 interface Props {
-  open: boolean;
-  onClose: () => void;
+  open:          boolean;
+  onClose:       () => void;
+  onPublished?:  (info: PublishedInfo) => void;
 }
 
 type ImportMethod = 'upload' | 'url';
@@ -56,6 +70,40 @@ const STEP_ITEMS = [
   { title: 'Review & Edit' },
   { title: 'Validation' },
 ];
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function mapBackendValidation(v: ValidationApiResponse): ValidationResult {
+  const passed    = v.overall_status === 'pass';
+  const specStage = v.stages.find(s => s.stage === 'specification_validation');
+  const specPassed = specStage ? specStage.status === 'pass' : passed;
+  const mainError  = v.errors[0]?.message ?? 'Validation failed.';
+
+  return {
+    specValidation: {
+      passed:  specPassed,
+      message: specPassed
+        ? 'OpenAPI / WSDL document is syntactically and structurally correct.'
+        : mainError,
+    },
+    domainCompliance: {
+      passed:  passed,
+      message: passed
+        ? 'API operations are consistent with e-invoicing standards (UBL 2.1 / PEPPOL BIS 3.0).'
+        : specPassed
+          ? 'Domain compliance check failed.'
+          : 'Not evaluated — preceding stage failed.',
+    },
+    securityMetadata: {
+      passed:  passed,
+      message: passed
+        ? 'Authentication scheme is present and fully described.'
+        : specPassed
+          ? 'Security metadata validation failed.'
+          : 'Not evaluated — preceding stage failed.',
+    },
+  };
+}
 
 // ── Sub-components ─────────────────────────────────────────────────────────
 
@@ -89,7 +137,7 @@ const StageRow: React.FC<StageRowProps> = ({ title, desc, stage }) => (
 
 // ── Main component ─────────────────────────────────────────────────────────
 
-const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
+const APIInfoForm: React.FC<Props> = ({ open, onClose, onPublished }) => {
   const [form] = Form.useForm();
 
   const [current, setCurrent]             = useState(0);
@@ -98,12 +146,14 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
   const [fileList, setFileList]           = useState<UploadFile[]>([]);
   const [rawFile, setRawFile]             = useState<File | null>(null);
   const [urlValue, setUrlValue]           = useState('');
+  const [specContent, setSpecContent]     = useState<string | null>(null);
   const [parsing, setParsing]             = useState(false);
   const [parseError, setParseError]       = useState<string | null>(null);
   const [parsedFields, setParsedFields]   = useState<Set<string>>(new Set());
   const [validating, setValidating]       = useState(false);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [published, setPublished]         = useState(false);
+  const [submissionId, setSubmissionId]   = useState<string | null>(null);
 
   const reset = () => {
     form.resetFields();
@@ -113,12 +163,14 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
     setFileList([]);
     setRawFile(null);
     setUrlValue('');
+    setSpecContent(null);
     setParsing(false);
     setParseError(null);
     setParsedFields(new Set());
     setValidating(false);
     setValidationResult(null);
     setPublished(false);
+    setSubmissionId(null);
   };
 
   const handleClose = () => { reset(); onClose(); };
@@ -145,6 +197,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target?.result as string;
+      setSpecContent(text);
       try {
         if (file.name.endsWith('.json')) {
           applyParsed(parseOpenApiJson(JSON.parse(text) as Record<string, unknown>));
@@ -163,6 +216,52 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
     reader.readAsText(file);
   };
 
+  const runRealSubmission = async () => {
+    setValidating(true);
+    setValidationResult(null);
+    const values = form.getFieldsValue() as {
+      name: string; endpoint: string; protocol: Protocol;
+      inputFormat: string; outputFormat: string; authMethod: string;
+      category: string; description?: string;
+    };
+    const req: SubmissionRequest = {
+      api_name:            values.name,
+      endpoint_url:        values.endpoint,
+      protocol:            values.protocol,
+      input_format:        values.inputFormat,
+      output_format:       values.outputFormat,
+      auth_method:         values.authMethod,
+      description:         values.description,
+      capability_category: values.category,
+      spec_content:        specContent!,
+    };
+    try {
+      const res: SubmissionApiResponse = await createSubmission(req);
+      setSubmissionId(res.submission_id);
+      const mapped = mapBackendValidation(res.validation);
+      setValidationResult(mapped);
+      if (res.validation.overall_status === 'pass') {
+        setPublished(true);
+        onPublished?.({
+          submissionId: res.submission_id,
+          name:         values.name,
+          protocol:     values.protocol,
+          endpoint:     values.endpoint,
+          authMethod:   values.authMethod,
+          category:     values.category,
+        });
+      }
+    } catch {
+      setValidationResult({
+        specValidation:   { passed: false, message: 'Submission failed. Please check your API specification.' },
+        domainCompliance: { passed: false, message: 'Validation could not be completed.' },
+        securityMetadata: { passed: false, message: 'Validation could not be completed.' },
+      });
+    } finally {
+      setValidating(false);
+    }
+  };
+
   const handleNext = async () => {
     if (current === 0) {
       if (importMethod === 'upload') {
@@ -172,44 +271,41 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
         if (!urlValue.trim()) { setParseError('Please enter a valid URL.'); return; }
         setParsing(true);
         setParseError(null);
-        setTimeout(() => {
+        try {
+          const response = await fetch(urlValue);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const text = await response.text();
+          setSpecContent(text);
+          try {
+            if (urlValue.toLowerCase().endsWith('.json') || text.trim().startsWith('{')) {
+              applyParsed(parseOpenApiJson(JSON.parse(text) as Record<string, unknown>));
+            } else {
+              applyParsed(parseWsdl(new DOMParser().parseFromString(text, 'text/xml')));
+            }
+          } catch {
+            setParseError('Fetched spec but could not auto-parse fields. Please fill in the details manually.');
+          }
+        } catch {
+          setParseError('Could not fetch spec from URL (CORS or network error). Form pre-filled with example data — please upload the file for actual submission.');
           applyParsed(MOCK_URL_RESULT);
+          setSpecContent(null);
+        } finally {
           setParsing(false);
           setCurrent(1);
-        }, 1400);
+        }
       }
       return;
     }
 
     if (current === 1) {
       await form.validateFields();
-      const authMethod = form.getFieldValue('authMethod') as string;
-      const proto      = form.getFieldValue('protocol')   as Protocol;
+      if (!specContent) {
+        message.warning('No spec content available. Please upload a specification file.');
+        return;
+      }
       setCurrent(2);
-      runMockValidation(authMethod, proto);
+      runRealSubmission();
     }
-  };
-
-  const runMockValidation = (authMethod: string, proto: Protocol) => {
-    setValidating(true);
-    setValidationResult(null);
-    setTimeout(() => {
-      setValidating(false);
-      setValidationResult({
-        specValidation: {
-          passed:  true,
-          message: `${proto === 'REST' ? 'OpenAPI 3.0' : 'WSDL 1.1'} document is syntactically and structurally correct.`,
-        },
-        domainCompliance: {
-          passed:  true,
-          message: 'API operations are consistent with e-invoicing standards (UBL 2.1 / PEPPOL BIS 3.0).',
-        },
-        securityMetadata: {
-          passed:  true,
-          message: `${authMethod} security scheme is present and fully described.`,
-        },
-      });
-    }, 1800);
   };
 
   const allPassed =
@@ -274,7 +370,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
                 setParseError(null);
                 return false;
               }}
-              onRemove={() => { setRawFile(null); setFileList([]); }}
+              onRemove={() => { setRawFile(null); setFileList([]); setSpecContent(null); }}
             >
               <p className="ant-upload-drag-icon"><InboxOutlined /></p>
               <p className="ant-upload-text">Click or drag the specification file here</p>
@@ -424,7 +520,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
           {validating && (
             <div className="apif-validating">
               <Spin indicator={<LoadingOutlined style={{ fontSize: 36 }} spin />} />
-              <span>Running validation pipeline…</span>
+              <span>Submitting and running validation pipeline…</span>
             </div>
           )}
           {!validating && validationResult && (
@@ -444,20 +540,20 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
                 desc="Presence and completeness of the declared authentication scheme"
                 stage={validationResult.securityMetadata}
               />
-              {allPassed && !published && (
-                <Alert
-                  type="success"
-                  showIcon
-                  message="All validation stages passed. Ready to publish to the repository."
-                  style={{ marginTop: 20 }}
-                />
-              )}
               {published && (
                 <Result
                   status="success"
                   title="API Published Successfully"
-                  subTitle="Your API is now available in the repository for discovery and composition."
+                  subTitle={`Submission ID: ${submissionId} — Your API is now available in the repository.`}
                   style={{ paddingBlock: 24 }}
+                />
+              )}
+              {!published && allPassed && (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="Validation passed but publication did not complete. Please try again."
+                  style={{ marginTop: 20 }}
                 />
               )}
             </>
@@ -477,11 +573,6 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose }) => {
             {current === 0
               ? (importMethod === 'upload' ? 'Parse & Continue' : 'Fetch & Continue')
               : 'Validate & Publish'}
-          </Button>
-        )}
-        {current === 2 && !validating && allPassed && !published && (
-          <Button type="primary" onClick={() => setPublished(true)}>
-            Publish to Repository
           </Button>
         )}
         {current === 2 && !validating && validationResult && !allPassed && (
