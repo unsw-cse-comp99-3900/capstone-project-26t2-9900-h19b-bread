@@ -1,24 +1,22 @@
-import request from '../utils/request';
-import type { LoginUser } from './login';
-
-// ── Request / Response types ───────────────────────────────────────────────
+import { apiPost } from '../utils/request';
+import type { User } from '../types/user';
 
 export interface RegisterRequest {
   name:          string;
   email:         string;
   password:      string;
+  /** Defaults to 1 on the backend if omitted. */
   enterprise_id?: number;
+  /** Defaults to "PUBLISHER" on the backend if omitted. */
   role?:         string;
 }
 
 export interface RegisterResponse {
   status:  'success' | 'fail';
-  user:    LoginUser | null;
+  user:    User | null;
   message: string;
 }
 
-// ── API call ───────────────────────────────────────────────────────────────
-
 export function registerUser(data: RegisterRequest): Promise<RegisterResponse> {
-  return request.post('/api/v1/auth/register', data) as unknown as Promise<RegisterResponse>;
+  return apiPost<RegisterResponse>('/api/v1/auth/register', data);
 }

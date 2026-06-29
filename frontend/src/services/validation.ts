@@ -1,4 +1,5 @@
-import request from '../utils/request';
+import { apiPost } from '../utils/request';
+import type { Protocol } from '../utils/helper';
 
 export interface ValidationErrorDetail {
   code:      string;
@@ -19,10 +20,10 @@ export interface ValidationApiResponse {
 }
 
 export interface ValidationRequest {
-  protocol:     'REST' | 'SOAP';
+  protocol:     Protocol;
   spec_content: string;
 }
 
 export function validateSpec(data: ValidationRequest): Promise<ValidationApiResponse> {
-  return request.post('/api/v1/validation/spec', data) as unknown as Promise<ValidationApiResponse>;
+  return apiPost<ValidationApiResponse>('/api/v1/validation/spec', data);
 }

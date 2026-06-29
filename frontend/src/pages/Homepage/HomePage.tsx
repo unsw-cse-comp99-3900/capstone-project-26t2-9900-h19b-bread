@@ -125,7 +125,7 @@ const HomePage: React.FC = () => {
     setWithdrawingId(record.key);
     try {
       await withdrawApi(record.key, {
-        actor_id: user.user_id,
+        actor_id: Number(user.user_id),
         reason:   'Withdrawn by publisher',
       });
       setTableData(prev =>
