@@ -30,5 +30,6 @@ class RegisterRequest(BaseModel):
 
 class RegisterResponse(BaseModel):
     status: str
+    token: str | None = None
     user: UserInfo | None = None
     message: str

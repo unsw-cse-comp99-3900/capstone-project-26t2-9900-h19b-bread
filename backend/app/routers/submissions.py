@@ -1,8 +1,9 @@
 import json
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.database import get_connection
+from app.core.security import require_role
 from app.schemas.submission_schema import SubmissionRequest, SubmissionResponse
 from app.schemas.validation_schema import ValidationRequest
 from app.services.validation_service import validate_specification
@@ -28,6 +29,7 @@ def map_protocol(protocol: str) -> str:
 def map_spec_type(protocol_type: str) -> str:
     if protocol_type == "REST":
         return "OPENAPI"
+
     if protocol_type == "SOAP":
         return "WSDL"
 
@@ -91,7 +93,10 @@ def map_validation_stage_status(stage_status: str) -> str:
 
 
 @router.post("", response_model=SubmissionResponse)
-def create_submission(request: SubmissionRequest) -> SubmissionResponse:
+def create_submission(
+    request: SubmissionRequest,
+    current_user: dict = Depends(require_role("PUBLISHER", "ADMIN")),
+) -> SubmissionResponse:
     validation_request = ValidationRequest(
         protocol=request.protocol,
         spec_content=request.spec_content,
@@ -115,15 +120,12 @@ def create_submission(request: SubmissionRequest) -> SubmissionResponse:
     db_version_status = map_version_status(overall_status_value)
     db_validation_overall_status = map_validation_overall_status(overall_status_value)
 
-    # Sprint 1 temporary default user and enterprise.
-    # Later this should come from the logged-in user/token.
-    enterprise_id = 1
-    submitted_by = 1
+    enterprise_id = current_user["enterprise_id"]
+    submitted_by = current_user["user_id"]
 
     try:
         with get_connection() as connection:
             with connection.cursor() as cursor:
-                # 1. Insert API submission metadata
                 cursor.execute(
                     """
                     INSERT INTO api_submission (
@@ -161,7 +163,6 @@ def create_submission(request: SubmissionRequest) -> SubmissionResponse:
                 api_row = cursor.fetchone()
                 api_id = api_row["api_id"]
 
-                # 2. Insert API version
                 cursor.execute(
                     """
                     INSERT INTO api_version (
@@ -186,7 +187,6 @@ def create_submission(request: SubmissionRequest) -> SubmissionResponse:
                 version_row = cursor.fetchone()
                 version_id = version_row["version_id"]
 
-                # 3. Insert API specification
                 cursor.execute(
                     """
                     INSERT INTO api_specification (
@@ -206,7 +206,6 @@ def create_submission(request: SubmissionRequest) -> SubmissionResponse:
                     ),
                 )
 
-                # 4. Insert auth metadata
                 cursor.execute(
                     """
                     INSERT INTO auth_metadata (
@@ -226,7 +225,6 @@ def create_submission(request: SubmissionRequest) -> SubmissionResponse:
                     ),
                 )
 
-                # 5. Insert validation run
                 cursor.execute(
                     """
                     INSERT INTO validation_run (
@@ -248,7 +246,6 @@ def create_submission(request: SubmissionRequest) -> SubmissionResponse:
                 validation_run_row = cursor.fetchone()
                 validation_run_id = validation_run_row["validation_run_id"]
 
-                # 6. Insert validation stage results
                 for stage in validation_result.stages:
                     stage_name = to_plain_value(stage.stage)
                     stage_status = to_plain_value(stage.status)
