@@ -18,6 +18,17 @@ from app.schemas.validation_schema import Protocol
 
 router = APIRouter(prefix="/apis", tags=["lifecycle"])
 
+try:
+    from app.core.security import require_role
+except ModuleNotFoundError as exc:
+    if exc.name != "app.core.security":
+        raise
+
+    def get_lifecycle_actor() -> dict | None:
+        return None
+else:
+    get_lifecycle_actor = require_role("PUBLISHER", "ADMIN")
+
 
 def get_lifecycle_service() -> LifecycleService:
     """Build a per-request service so repository connection state is not shared."""
@@ -112,22 +123,30 @@ def _parse_validation_passed(request: ValidationResultRequest) -> bool:
     )
 
 
+def _resolve_actor_id(body_actor_id: int, current_user: dict | None) -> int:
+    if current_user is not None:
+        return current_user["user_id"]
+    return body_actor_id
+
+
 @router.post("/{api_id}/submit", response_model=LifecycleResponse)
 def submit_api_endpoint(
     api_id: int,
     request: SubmitRequest | None = Body(default=None),
     coordinator: SubmissionCoordinator = Depends(get_submission_coordinator),
+    current_user: dict | None = Depends(get_lifecycle_actor),
 ) -> LifecycleResponse:
     body = request or SubmitRequest()
+    actor_id = _resolve_actor_id(body.actor_id, current_user)
     if body.spec_content is not None:
         result = coordinator.submit_and_validate(
             api_id=api_id,
-            actor_id=body.actor_id,
+            actor_id=actor_id,
             protocol=body.protocol,
             spec_content=body.spec_content,
         )
     else:
-        result = coordinator.submit_only(api_id=api_id, actor_id=body.actor_id)
+        result = coordinator.submit_only(api_id=api_id, actor_id=actor_id)
     return _to_response(result)
 
 
@@ -156,11 +175,12 @@ def withdraw_api_endpoint(
     api_id: int,
     request: WithdrawRequest | None = Body(default=None),
     service: LifecycleService = Depends(get_lifecycle_service),
+    current_user: dict | None = Depends(get_lifecycle_actor),
 ) -> LifecycleResponse:
     body = request or WithdrawRequest()
     result = service.withdraw_api(
         api_id=api_id,
-        actor_id=body.actor_id,
+        actor_id=_resolve_actor_id(body.actor_id, current_user),
         reason=body.reason,
     )
     return _to_response(result)
@@ -170,6 +190,7 @@ def withdraw_api_endpoint(
 def get_status_endpoint(
     api_id: int,
     service: LifecycleService = Depends(get_lifecycle_service),
+    _current_user: dict | None = Depends(get_lifecycle_actor),
 ) -> ApiStatusResponse:
     result = service.get_status(api_id)
     return ApiStatusResponse(
