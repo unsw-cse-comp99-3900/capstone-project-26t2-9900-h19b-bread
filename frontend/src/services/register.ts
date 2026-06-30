@@ -13,6 +13,7 @@ export interface RegisterRequest {
 
 export interface RegisterResponse {
   status:  'success' | 'fail';
+  token:   string | null;
   user:    User | null;
   message: string;
 }

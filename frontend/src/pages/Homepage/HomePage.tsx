@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Layout,
   Menu,
@@ -30,67 +30,63 @@ import {
   CloseCircleOutlined,
   ClockCircleOutlined,
   MinusCircleOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import type { TableColumnsType } from 'antd';
 import APIInfoForm from '../../components/APIInfoForm';
-import type { PublishedInfo } from '../../components/APIInfoForm';
 import { logout } from '../../store/authSlice';
 import type { RootState, AppDispatch } from '../../store';
 import { withdrawApi } from '../../services/lifecycle';
+import { getSubmissions } from '../../services/submission';
+import type { SubmissionListItem } from '../../services/submission';
 import './Homepage.scss';
 
 const { Header, Sider, Content } = Layout;
 const { Title } = Typography;
 
-type ApiStatus = 'Published' | 'Rejected' | 'Draft' | 'Withdrawn';
+type ApiStatus = 'Published' | 'Rejected' | 'Draft' | 'Validating' | 'Withdrawn';
 
 interface ApiRecord {
   key:        string;
   name:       string;
-  protocol:   'REST' | 'SOAP';
+  protocol:   string;
   endpoint:   string;
   authMethod: string;
   category:   string;
   status:     ApiStatus;
 }
 
-const initialData: ApiRecord[] = [
-  {
-    key:        '1',
-    name:       'Invoice Creation API',
-    protocol:   'REST',
-    endpoint:   'https://api.acme.com/invoices',
-    authMethod: 'OAuth 2.0',
-    category:   'Invoice Creation',
-    status:     'Published',
-  },
-  {
-    key:        '2',
-    name:       'PEPPOL Validation Service',
-    protocol:   'SOAP',
-    endpoint:   'https://svc.acme.com/validate',
-    authMethod: 'mTLS',
-    category:   'Validation',
-    status:     'Rejected',
-  },
-  {
-    key:        '3',
-    name:       'Invoice Archive API',
-    protocol:   'REST',
-    endpoint:   'https://api.acme.com/archive',
-    authMethod: 'API Key',
-    category:   'Archiving',
-    status:     'Draft',
-  },
-];
+function mapStatus(s: string): ApiStatus {
+  const m: Record<string, ApiStatus> = {
+    DRAFT:      'Draft',
+    VALIDATING: 'Validating',
+    REJECTED:   'Rejected',
+    PUBLISHED:  'Published',
+    WITHDRAWN:  'Withdrawn',
+  };
+  return m[s.toUpperCase()] ?? 'Draft';
+}
+
+function toRecord(item: SubmissionListItem): ApiRecord {
+  return {
+    key:        String(item.api_id),
+    name:       item.api_name,
+    protocol:   item.protocol_type,
+    endpoint:   item.endpoint_url,
+    authMethod: '—',
+    category:   item.capability_category,
+    status:     mapStatus(item.status),
+  };
+}
 
 const statusConfig: Record<ApiStatus, { color: string; icon: React.ReactNode }> = {
-  Published: { color: 'success', icon: <CheckCircleOutlined /> },
-  Rejected:  { color: 'error',   icon: <CloseCircleOutlined /> },
-  Draft:     { color: 'warning', icon: <ClockCircleOutlined /> },
-  Withdrawn: { color: 'default', icon: <MinusCircleOutlined /> },
+  Published:  { color: 'success',    icon: <CheckCircleOutlined /> },
+  Rejected:   { color: 'error',      icon: <CloseCircleOutlined /> },
+  Draft:      { color: 'warning',    icon: <ClockCircleOutlined /> },
+  Validating: { color: 'processing', icon: <SyncOutlined spin /> },
+  Withdrawn:  { color: 'default',    icon: <MinusCircleOutlined /> },
 };
 
 const protocolColorMap: Record<string, string> = {
@@ -108,12 +104,27 @@ const HomePage: React.FC = () => {
   const [selectedKey, setSelectedKey] = useState('publisher');
   const [collapsed, setCollapsed]     = useState(false);
   const [modalOpen, setModalOpen]     = useState(false);
-  const [tableData, setTableData]     = useState<ApiRecord[]>(initialData);
+  const [tableData, setTableData]     = useState<ApiRecord[]>([]);
+  const [loading, setLoading]         = useState(false);
   const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
 
   const navigate = useNavigate();
   const dispatch = useDispatch<AppDispatch>();
   const user     = useSelector((s: RootState) => s.auth.user);
+
+  const loadSubmissions = useCallback(async () => {
+    setLoading(true);
+    try {
+      const items = await getSubmissions();
+      setTableData(items.map(toRecord));
+    } catch {
+      // error shown by request interceptor
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadSubmissions(); }, [loadSubmissions]);
 
   const handleLogout = () => {
     dispatch(logout());
@@ -128,10 +139,8 @@ const HomePage: React.FC = () => {
         actor_id: Number(user.user_id),
         reason:   'Withdrawn by publisher',
       });
-      setTableData(prev =>
-        prev.map(r => r.key === record.key ? { ...r, status: 'Withdrawn' } : r)
-      );
       message.success(`"${record.name}" has been withdrawn.`);
+      loadSubmissions();
     } catch {
       // error already shown by request interceptor
     } finally {
@@ -139,20 +148,7 @@ const HomePage: React.FC = () => {
     }
   };
 
-  const handlePublished = (info: PublishedInfo) => {
-    setTableData(prev => [
-      ...prev,
-      {
-        key:        info.submissionId,
-        name:       info.name,
-        protocol:   info.protocol,
-        endpoint:   info.endpoint,
-        authMethod: info.authMethod,
-        category:   info.category,
-        status:     'Published',
-      },
-    ]);
-  };
+  const handleFormComplete = () => { loadSubmissions(); };
 
   const columns: TableColumnsType<ApiRecord> = [
     {
@@ -200,7 +196,7 @@ const HomePage: React.FC = () => {
       dataIndex: 'category',
       key:       'category',
       align:     'center',
-      width:     130,
+      width:     150,
     },
     {
       title:     'Status',
@@ -228,18 +224,20 @@ const HomePage: React.FC = () => {
       width:  108,
       render: (_, record) => (
         <Space size={6}>
-          <Tooltip title="Update">
+          <Tooltip title="Update (coming soon)">
             <Button
               size="small"
               icon={<EditOutlined />}
               className="hp-btn-update"
+              disabled
             />
           </Tooltip>
-          <Tooltip title="Schema Mapping">
+          <Tooltip title="Schema Mapping (coming soon)">
             <Button
               size="small"
               icon={<SwapOutlined />}
               className="hp-btn-mapping"
+              disabled
             />
           </Tooltip>
           <Popconfirm
@@ -360,6 +358,7 @@ const HomePage: React.FC = () => {
             <Table<ApiRecord>
               columns={columns}
               dataSource={tableData}
+              loading={loading}
               pagination={false}
               bordered
               className="hp-table"
@@ -373,7 +372,7 @@ const HomePage: React.FC = () => {
     <APIInfoForm
       open={modalOpen}
       onClose={() => setModalOpen(false)}
-      onPublished={handlePublished}
+      onComplete={handleFormComplete}
     />
     </>
   );

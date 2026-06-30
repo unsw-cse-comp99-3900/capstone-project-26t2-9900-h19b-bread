@@ -14,8 +14,9 @@ export interface ParsedInfo {
 }
 
 export interface StageResult {
-  passed: boolean;
-  message: string;
+  passed:   boolean;
+  skipped?: boolean;
+  message:  string;
 }
 
 export interface ValidationResult {
