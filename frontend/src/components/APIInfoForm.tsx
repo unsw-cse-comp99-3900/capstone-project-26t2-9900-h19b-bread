@@ -405,6 +405,20 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onComplete }) => {
               maxCount={1}
               fileList={fileList}
               beforeUpload={(file) => {
+                const name = (file as unknown as File).name.toLowerCase();
+                const ext  = name.includes('.') ? '.' + name.split('.').pop() : '';
+                const allowed = protocol === 'REST'
+                  ? ['.json', '.yaml', '.yml']
+                  : ['.wsdl', '.xml'];
+                if (!allowed.includes(ext)) {
+                  setParseError(
+                    `Unsupported file format "${ext || '(none)'}". ` +
+                    (protocol === 'REST'
+                      ? 'Please upload an OpenAPI specification (.json, .yaml, or .yml).'
+                      : 'Please upload a WSDL document (.wsdl or .xml).')
+                  );
+                  return Upload.LIST_IGNORE;
+                }
                 setRawFile(file as unknown as File);
                 setFileList([file as unknown as UploadFile]);
                 setParseError(null);
@@ -440,7 +454,12 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onComplete }) => {
           )}
 
           {parseError && !parsing && (
-            <Alert type="warning" showIcon message={parseError} style={{ marginTop: 14 }} />
+            <Alert
+              type={parseError.startsWith('Unsupported') ? 'error' : 'warning'}
+              showIcon
+              message={parseError}
+              style={{ marginTop: 14 }}
+            />
           )}
         </div>
       )}
