@@ -1,15 +1,16 @@
 import hashlib
 
 from fastapi import APIRouter, HTTPException
-from psycopg.errors import UniqueViolation, ForeignKeyViolation
+from psycopg.errors import ForeignKeyViolation, UniqueViolation
 
 from app.core.database import get_connection
+from app.core.security import create_access_token
 from app.schemas.auth_schema import (
     LoginRequest,
     LoginResponse,
-    UserInfo,
     RegisterRequest,
     RegisterResponse,
+    UserInfo,
 )
 
 router = APIRouter()
@@ -20,7 +21,7 @@ def hash_password(password: str) -> str:
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(request: LoginRequest):
+def login(request: LoginRequest) -> LoginResponse:
     password_hash = hash_password(request.password)
 
     with get_connection() as connection:
@@ -39,7 +40,6 @@ def login(request: LoginRequest):
                 """,
                 (request.email,),
             )
-
             row = cursor.fetchone()
 
     if row is None:
@@ -47,7 +47,7 @@ def login(request: LoginRequest):
             status="fail",
             token=None,
             user=None,
-            message="Invalid email or password."
+            message="Invalid email or password.",
         )
 
     if row["status"] != "ACTIVE":
@@ -55,7 +55,7 @@ def login(request: LoginRequest):
             status="fail",
             token=None,
             user=None,
-            message="User account is not active."
+            message="User account is not active.",
         )
 
     if row["password_hash"] != password_hash:
@@ -63,24 +63,31 @@ def login(request: LoginRequest):
             status="fail",
             token=None,
             user=None,
-            message="Invalid email or password."
+            message="Invalid email or password.",
         )
+
+    token = create_access_token(
+        user_id=row["user_id"],
+        email=row["email"],
+        role=row["role"],
+        enterprise_id=row["enterprise_id"],
+    )
 
     return LoginResponse(
         status="success",
-        token=f"mock-token-user-{row['user_id']}",
+        token=token,
         user=UserInfo(
             user_id=str(row["user_id"]),
             email=row["email"],
             role=row["role"],
             enterprise_id=str(row["enterprise_id"]),
         ),
-        message="Login successful."
+        message="Login successful.",
     )
 
 
 @router.post("/register", response_model=RegisterResponse)
-def register(request: RegisterRequest):
+def register(request: RegisterRequest) -> RegisterResponse:
     password_hash = hash_password(request.password)
 
     try:
@@ -107,18 +114,25 @@ def register(request: RegisterRequest):
                         request.role,
                     ),
                 )
-
                 row = cursor.fetchone()
+
+        token = create_access_token(
+            user_id=row["user_id"],
+            email=row["email"],
+            role=row["role"],
+            enterprise_id=row["enterprise_id"],
+        )
 
         return RegisterResponse(
             status="success",
+            token=token,
             user=UserInfo(
                 user_id=str(row["user_id"]),
-                enterprise_id=str(row["enterprise_id"]),
                 email=row["email"],
                 role=row["role"],
+                enterprise_id=str(row["enterprise_id"]),
             ),
-            message="User registered successfully."
+            message="User registered successfully.",
         )
 
     except UniqueViolation:
