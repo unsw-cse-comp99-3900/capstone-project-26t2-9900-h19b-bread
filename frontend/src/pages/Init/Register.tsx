@@ -9,7 +9,6 @@ import {
 import { useNavigate } from "react-router-dom";
 import { useDispatch } from "react-redux";
 import { registerUser } from "../../services/register";
-import { login } from "../../services/login";
 import { setCredentials } from "../../store/authSlice";
 import type { AppDispatch } from "../../store";
 import "./Login.scss";
@@ -35,16 +34,13 @@ const Register = () => {
         password: values.password,
       });
 
-      if (res.status === 'success') {
-        const loginRes = await login({ email: values.email, password: values.password });
-        if (loginRes.status === 'success' && loginRes.token && loginRes.user) {
-          dispatch(setCredentials({ token: loginRes.token, user: loginRes.user }));
-          message.success('Account created successfully.');
-          navigate('/homepage');
-        } else {
-          message.success('Account created. Please sign in.');
-          navigate('/login');
-        }
+      if (res.status === 'success' && res.token && res.user) {
+        dispatch(setCredentials({ token: res.token, user: res.user }));
+        message.success('Account created successfully.');
+        navigate('/homepage');
+      } else if (res.status === 'success') {
+        message.success('Account created. Please sign in.');
+        navigate('/login');
       } else {
         message.error(res.message || 'Registration failed.');
       }

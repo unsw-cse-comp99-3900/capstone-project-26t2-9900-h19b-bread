@@ -19,6 +19,7 @@ import {
   InboxOutlined,
   CheckCircleFilled,
   CloseCircleFilled,
+  MinusCircleOutlined,
   LoadingOutlined,
   ThunderboltOutlined,
   LinkOutlined,
@@ -35,7 +36,7 @@ import {
   parseOpenApiJson,
   parseWsdl,
 } from '../utils/helper';
-import { createSubmission } from '../services/submission';
+import { createSubmission, saveDraft, importFromUrl } from '../services/submission';
 import type { SubmissionApiResponse, SubmissionRequest } from '../services/submission';
 import type { ValidationApiResponse } from '../services/validation';
 import './APIInfoForm.scss';
@@ -46,19 +47,10 @@ const { Dragger }  = Upload;
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-export interface PublishedInfo {
-  submissionId: string;
-  name:         string;
-  protocol:     Protocol;
-  endpoint:     string;
-  authMethod:   string;
-  category:     string;
-}
-
 interface Props {
-  open:          boolean;
-  onClose:       () => void;
-  onPublished?:  (info: PublishedInfo) => void;
+  open:        boolean;
+  onClose:     () => void;
+  onComplete?: () => void;
 }
 
 type ImportMethod = 'upload' | 'url';
@@ -87,16 +79,18 @@ function mapBackendValidation(v: ValidationApiResponse): ValidationResult {
         : mainError,
     },
     domainCompliance: {
-      passed:  passed,
-      message: passed
+      passed:   passed,
+      skipped:  !specPassed,
+      message:  passed
         ? 'API operations are consistent with e-invoicing standards (UBL 2.1 / PEPPOL BIS 3.0).'
         : specPassed
           ? 'Domain compliance check failed.'
           : 'Not evaluated — preceding stage failed.',
     },
     securityMetadata: {
-      passed:  passed,
-      message: passed
+      passed:   passed,
+      skipped:  !specPassed,
+      message:  passed
         ? 'Authentication scheme is present and fully described.'
         : specPassed
           ? 'Security metadata validation failed.'
@@ -118,26 +112,31 @@ const FieldLabel: React.FC<FieldLabelProps> = ({ name, auto }) => (
 
 interface StageRowProps { title: string; desc: string; stage: StageResult; }
 
-const StageRow: React.FC<StageRowProps> = ({ title, desc, stage }) => (
-  <div className={`apif-stage-row ${stage.passed ? 'apif-stage-row--pass' : 'apif-stage-row--fail'}`}>
-    <span className="apif-stage-row__icon">
-      {stage.passed
-        ? <CheckCircleFilled style={{ color: '#52c41a' }} />
-        : <CloseCircleFilled style={{ color: '#ff4d4f' }} />}
-    </span>
-    <div className="apif-stage-row__body">
-      <div className="apif-stage-row__title">{title}</div>
-      <div className="apif-stage-row__desc">{desc}</div>
-      <div className={`apif-stage-row__message apif-stage-row__message--${stage.passed ? 'pass' : 'fail'}`}>
-        {stage.passed ? '✓ ' : '✗ '}{stage.message}
+const StageRow: React.FC<StageRowProps> = ({ title, desc, stage }) => {
+  const modifier = stage.skipped ? 'skip' : stage.passed ? 'pass' : 'fail';
+  return (
+    <div className={`apif-stage-row apif-stage-row--${modifier}`}>
+      <span className="apif-stage-row__icon">
+        {stage.skipped
+          ? <MinusCircleOutlined style={{ color: '#bfbfbf' }} />
+          : stage.passed
+            ? <CheckCircleFilled style={{ color: '#52c41a' }} />
+            : <CloseCircleFilled style={{ color: '#ff4d4f' }} />}
+      </span>
+      <div className="apif-stage-row__body">
+        <div className="apif-stage-row__title">{title}</div>
+        <div className="apif-stage-row__desc">{desc}</div>
+        <div className={`apif-stage-row__message apif-stage-row__message--${modifier}`}>
+          {stage.skipped ? '— ' : stage.passed ? '✓ ' : '✗ '}{stage.message}
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 // ── Main component ─────────────────────────────────────────────────────────
 
-const APIInfoForm: React.FC<Props> = ({ open, onClose, onPublished }) => {
+const APIInfoForm: React.FC<Props> = ({ open, onClose, onComplete }) => {
   const [form] = Form.useForm();
 
   const [current, setCurrent]             = useState(0);
@@ -151,6 +150,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onPublished }) => {
   const [parseError, setParseError]       = useState<string | null>(null);
   const [parsedFields, setParsedFields]   = useState<Set<string>>(new Set());
   const [validating, setValidating]       = useState(false);
+  const [savingDraft, setSavingDraft]     = useState(false);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [published, setPublished]         = useState(false);
   const [submissionId, setSubmissionId]   = useState<string | null>(null);
@@ -168,6 +168,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onPublished }) => {
     setParseError(null);
     setParsedFields(new Set());
     setValidating(false);
+    setSavingDraft(false);
     setValidationResult(null);
     setPublished(false);
     setSubmissionId(null);
@@ -216,40 +217,50 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onPublished }) => {
     reader.readAsText(file);
   };
 
+  const getFormValues = () => form.getFieldsValue() as {
+    name: string; endpoint: string; protocol: Protocol;
+    inputFormat: string; outputFormat: string; authMethod: string;
+    category: string; description?: string;
+  };
+
   const runRealSubmission = async () => {
     setValidating(true);
     setValidationResult(null);
-    const values = form.getFieldsValue() as {
-      name: string; endpoint: string; protocol: Protocol;
-      inputFormat: string; outputFormat: string; authMethod: string;
-      category: string; description?: string;
-    };
-    const req: SubmissionRequest = {
-      api_name:            values.name,
-      endpoint_url:        values.endpoint,
-      protocol:            values.protocol,
-      input_format:        values.inputFormat,
-      output_format:       values.outputFormat,
-      auth_method:         values.authMethod,
-      description:         values.description,
-      capability_category: values.category,
-      spec_content:        specContent!,
-    };
+    const values = getFormValues();
     try {
-      const res: SubmissionApiResponse = await createSubmission(req);
+      let res: SubmissionApiResponse;
+      if (importMethod === 'url') {
+        res = await importFromUrl({
+          api_name:            values.name,
+          endpoint_url:        values.endpoint,
+          protocol:            values.protocol,
+          input_format:        values.inputFormat,
+          output_format:       values.outputFormat,
+          auth_method:         values.authMethod,
+          description:         values.description,
+          capability_category: values.category,
+          spec_url:            urlValue,
+        });
+      } else {
+        const req: SubmissionRequest = {
+          api_name:            values.name,
+          endpoint_url:        values.endpoint,
+          protocol:            values.protocol,
+          input_format:        values.inputFormat,
+          output_format:       values.outputFormat,
+          auth_method:         values.authMethod,
+          description:         values.description,
+          capability_category: values.category,
+          spec_content:        specContent!,
+        };
+        res = await createSubmission(req);
+      }
       setSubmissionId(res.submission_id);
       const mapped = mapBackendValidation(res.validation);
       setValidationResult(mapped);
+      onComplete?.();
       if (res.validation.overall_status === 'pass') {
         setPublished(true);
-        onPublished?.({
-          submissionId: res.submission_id,
-          name:         values.name,
-          protocol:     values.protocol,
-          endpoint:     values.endpoint,
-          authMethod:   values.authMethod,
-          category:     values.category,
-        });
       }
     } catch {
       setValidationResult({
@@ -259,6 +270,36 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onPublished }) => {
       });
     } finally {
       setValidating(false);
+    }
+  };
+
+  const handleSaveDraft = async () => {
+    try { await form.validateFields(); } catch { return; }
+    if (!specContent) {
+      message.warning('Please upload a specification file to save as draft.');
+      return;
+    }
+    const values = getFormValues();
+    setSavingDraft(true);
+    try {
+      await saveDraft({
+        api_name:            values.name,
+        endpoint_url:        values.endpoint,
+        protocol:            values.protocol,
+        input_format:        values.inputFormat,
+        output_format:       values.outputFormat,
+        auth_method:         values.authMethod,
+        description:         values.description,
+        capability_category: values.category,
+        spec_content:        specContent,
+      });
+      message.success('Draft saved. You can submit for validation later.');
+      onComplete?.();
+      handleClose();
+    } catch {
+      // error shown by request interceptor
+    } finally {
+      setSavingDraft(false);
     }
   };
 
@@ -286,9 +327,8 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onPublished }) => {
             setParseError('Fetched spec but could not auto-parse fields. Please fill in the details manually.');
           }
         } catch {
-          setParseError('Could not fetch spec from URL (CORS or network error). Form pre-filled with example data — please upload the file for actual submission.');
+          setParseError('Could not fetch the URL for preview (CORS restriction). The backend will fetch the spec directly during submission — please fill in the form fields manually.');
           applyParsed(MOCK_URL_RESULT);
-          setSpecContent(null);
         } finally {
           setParsing(false);
           setCurrent(1);
@@ -299,7 +339,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onPublished }) => {
 
     if (current === 1) {
       await form.validateFields();
-      if (!specContent) {
+      if (importMethod === 'upload' && !specContent) {
         message.warning('No spec content available. Please upload a specification file.');
         return;
       }
@@ -365,6 +405,20 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onPublished }) => {
               maxCount={1}
               fileList={fileList}
               beforeUpload={(file) => {
+                const name = (file as unknown as File).name.toLowerCase();
+                const ext  = name.includes('.') ? '.' + name.split('.').pop() : '';
+                const allowed = protocol === 'REST'
+                  ? ['.json', '.yaml', '.yml']
+                  : ['.wsdl', '.xml'];
+                if (!allowed.includes(ext)) {
+                  setParseError(
+                    `Unsupported file format "${ext || '(none)'}". ` +
+                    (protocol === 'REST'
+                      ? 'Please upload an OpenAPI specification (.json, .yaml, or .yml).'
+                      : 'Please upload a WSDL document (.wsdl or .xml).')
+                  );
+                  return Upload.LIST_IGNORE;
+                }
                 setRawFile(file as unknown as File);
                 setFileList([file as unknown as UploadFile]);
                 setParseError(null);
@@ -400,7 +454,12 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onPublished }) => {
           )}
 
           {parseError && !parsing && (
-            <Alert type="warning" showIcon message={parseError} style={{ marginTop: 14 }} />
+            <Alert
+              type={parseError.startsWith('Unsupported') ? 'error' : 'warning'}
+              showIcon
+              message={parseError}
+              style={{ marginTop: 14 }}
+            />
           )}
         </div>
       )}
@@ -564,14 +623,19 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onPublished }) => {
       {/* ── Footer ────────────────────────────────────────────────────── */}
       <div className="apif-footer">
         {current > 0 && !published && (
-          <Button onClick={() => setCurrent(c => c - 1)} disabled={validating || parsing}>
+          <Button onClick={() => setCurrent(c => c - 1)} disabled={validating || savingDraft || parsing}>
             Back
           </Button>
         )}
+        {current === 1 && importMethod === 'upload' && (
+          <Button onClick={handleSaveDraft} loading={savingDraft} disabled={validating}>
+            Save as Draft
+          </Button>
+        )}
         {current < 2 && (
-          <Button type="primary" onClick={handleNext} loading={parsing}>
+          <Button type="primary" onClick={handleNext} loading={parsing} disabled={savingDraft}>
             {current === 0
-              ? (importMethod === 'upload' ? 'Parse & Continue' : 'Fetch & Continue')
+              ? (importMethod === 'upload' ? 'Parse & Continue' : 'Continue')
               : 'Validate & Publish'}
           </Button>
         )}
@@ -582,7 +646,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onPublished }) => {
           <Button type="primary" onClick={handleClose}>Done</Button>
         )}
         {!published && (
-          <Button onClick={handleClose} disabled={validating || parsing}>Cancel</Button>
+          <Button onClick={handleClose} disabled={validating || savingDraft || parsing}>Cancel</Button>
         )}
       </div>
     </Modal>
