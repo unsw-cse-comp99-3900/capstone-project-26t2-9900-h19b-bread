@@ -10,13 +10,18 @@ const ProtectedRoute = ({ element }: { element: React.ReactElement }) => {
   return token ? element : <Navigate to="/login" replace />;
 };
 
+const GuestRoute = ({ element }: { element: React.ReactElement }) => {
+  const token = useSelector((s: RootState) => s.auth.token);
+  return token ? <Navigate to="/homepage" replace /> : element;
+};
+
 function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/"          element={<Navigate to="/login" replace />} />
-        <Route path="/login"     element={<Login />} />
-        <Route path="/register"  element={<Register />} />
+        <Route path="/"          element={<GuestRoute element={<Navigate to="/login" replace />} />} />
+        <Route path="/login"     element={<GuestRoute element={<Login />} />} />
+        <Route path="/register"  element={<GuestRoute element={<Register />} />} />
         <Route path="/homepage"  element={<ProtectedRoute element={<HomePage />} />} />
         <Route path="*"          element={<Navigate to="/login" replace />} />
       </Routes>
