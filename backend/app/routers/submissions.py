@@ -145,6 +145,11 @@ def create_submission(
     validation_request = ValidationRequest(
         protocol=request.protocol,
         spec_content=request.spec_content,
+        auth_method=request.auth_method,
+        endpoint_url=request.endpoint_url,
+        input_format=request.input_format,
+        output_format=request.output_format,
+        capability_category=request.capability_category,
     )
 
     validation_result = validate_specification(validation_request)
