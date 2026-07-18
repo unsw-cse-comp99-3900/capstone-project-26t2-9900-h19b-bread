@@ -190,6 +190,12 @@ $text-muted:   #8c8c8c;
     background: #fff2f0;
   }
 
+  &--skip {
+    border-left-color: #d9d9d9;
+    background: #fafafa;
+    opacity: 0.65;
+  }
+
   &__icon {
     font-size: 18px;
     flex-shrink: 0;
@@ -220,8 +226,9 @@ $text-muted:   #8c8c8c;
     font-size: 12px;
     line-height: 1.5;
 
-    &--pass { color: $success; }
-    &--fail { color: $error;   }
+    &--pass { color: $success;  }
+    &--fail { color: $error;    }
+    &--skip { color: #8c8c8c;  }
   }
 }
 

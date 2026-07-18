@@ -1,0 +1,164 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "E-Invoice Submission API - Partially Invalid",
+    "description": "A deliberately flawed OpenAPI document for testing validation and error reporting."
+  },
+  "servers": [
+    {
+      "url": "https://api.einvoice.example.com/v1"
+    }
+  ],
+  "tags": [
+    {
+      "name": "submit",
+      "description": "Invoice creation and submission"
+    }
+  ],
+  "paths": {
+    "/invoices": {
+      "post": {
+        "tags": [
+          "submit"
+        ],
+        "summary": "Submit an electronic invoice",
+        "operationId": "submitInvoice",
+        "security": [
+          {
+            "OAuth2ClientCredentials": [
+              "invoice:write"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceSubmissionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Invoice accepted for processing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MissingInvoiceSubmissionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid invoice payload"
+          }
+        }
+      }
+    },
+    "/invoices/{invoiceId}/status": {
+      "get": {
+        "tags": [
+          "submit"
+        ],
+        "summary": "Get invoice processing status",
+        "operationId": "getInvoiceStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "OAuth2ClientCredentials": {
+        "type": "oauth2",
+        "flows": {
+          "clientCredentials": {
+            "tokenUrl": 12345,
+            "scopes": {
+              "invoice:write": "Submit invoices",
+              "invoice:read": "Read invoice status"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "InvoiceSubmissionRequest": {
+        "type": "object",
+        "required": [
+          "supplierTaxId",
+          "buyerTaxId",
+          "invoiceNumber",
+          "issueDate",
+          "currency",
+          "totalAmount",
+          "missingRequiredField"
+        ],
+        "properties": {
+          "supplierTaxId": {
+            "type": "string",
+            "example": "AU123456789"
+          },
+          "buyerTaxId": {
+            "type": "string",
+            "example": "AU987654321"
+          },
+          "invoiceNumber": {
+            "type": "string",
+            "example": "INV-2026-0001"
+          },
+          "issueDate": {
+            "type": "string",
+            "format": "not-a-real-format",
+            "example": "2026-06-28"
+          },
+          "currency": {
+            "type": "string",
+            "enum": []
+          },
+          "totalAmount": {
+            "type": "money",
+            "format": "double",
+            "example": 1250.75
+          }
+        }
+      },
+      "InvoiceStatusResponse": {
+        "type": "object",
+        "properties": {
+          "invoiceId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}
