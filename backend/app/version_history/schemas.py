@@ -144,3 +144,22 @@ class LifecycleHistoryResponse(BaseModel):
     offset: int
     items: list[LifecycleEventResponse]
 
+
+class HistoryAccessRequest(BaseModel):
+    visibility: str
+    allowed_user_ids: list[int] = Field(default_factory=list)
+
+
+class HistoryAllowedUserResponse(BaseModel):
+    user_id: int
+    name: str
+    email: str
+    enterprise_id: int
+    granted_by: int
+    granted_at: datetime
+
+
+class HistoryAccessResponse(BaseModel):
+    api_id: int
+    visibility: str
+    allowed_users: list[HistoryAllowedUserResponse]

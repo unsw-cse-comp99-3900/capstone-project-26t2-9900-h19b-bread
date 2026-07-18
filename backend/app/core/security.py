@@ -11,7 +11,7 @@ from jose import JWTError, jwt
 BACKEND_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 load_dotenv(BACKEND_ENV_PATH)
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 def create_access_token(
@@ -41,13 +41,19 @@ def create_access_token(
 
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> dict[str, Any]:
     secret_key = os.getenv("JWT_SECRET_KEY")
     algorithm = os.getenv("JWT_ALGORITHM", "HS256")
 
     if not secret_key:
         raise RuntimeError("JWT_SECRET_KEY is not configured.")
+
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication credentials were not provided.",
+        )
 
     token = credentials.credentials
 

@@ -45,7 +45,8 @@ class PostgresVersionHistoryRepository:
                         submitted_by,
                         status,
                         current_version_id,
-                        last_published_version_id
+                        last_published_version_id,
+                        history_visibility
                     FROM api_submission
                     WHERE api_id = %s
                     FOR UPDATE
@@ -73,6 +74,82 @@ class PostgresVersionHistoryRepository:
                     (api_id,),
                 )
                 return cursor.fetchone()
+
+    def has_access_grant(self, api_id: int, user_id: int) -> bool:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT 1
+                    FROM api_history_access_grant
+                    WHERE api_id = %s AND user_id = %s
+                    """,
+                    (api_id, user_id),
+                )
+                return cursor.fetchone() is not None
+
+    def get_access_grants(self, api_id: int) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        grant_record.user_id,
+                        user_record.name,
+                        user_record.email,
+                        user_record.enterprise_id,
+                        grant_record.granted_by,
+                        grant_record.granted_at
+                    FROM api_history_access_grant grant_record
+                    JOIN app_user user_record ON user_record.user_id = grant_record.user_id
+                    WHERE grant_record.api_id = %s
+                    ORDER BY grant_record.user_id
+                    """,
+                    (api_id,),
+                )
+                return cursor.fetchall()
+
+    def get_existing_user_ids(self, user_ids: list[int]) -> set[int]:
+        if not user_ids:
+            return set()
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT user_id FROM app_user WHERE user_id = ANY(%s)",
+                    (user_ids,),
+                )
+                return {row["user_id"] for row in cursor.fetchall()}
+
+    def replace_access_policy(
+        self,
+        api_id: int,
+        visibility: str,
+        user_ids: list[int],
+        actor_id: int,
+    ) -> None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE api_submission
+                    SET history_visibility = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE api_id = %s
+                    """,
+                    (visibility, api_id),
+                )
+                cursor.execute(
+                    "DELETE FROM api_history_access_grant WHERE api_id = %s",
+                    (api_id,),
+                )
+                if user_ids:
+                    cursor.executemany(
+                        """
+                        INSERT INTO api_history_access_grant (api_id, user_id, granted_by)
+                        VALUES (%s, %s, %s)
+                        """,
+                        [(api_id, user_id, actor_id) for user_id in user_ids],
+                    )
 
     def list_versions(self, api_id: int, limit: int, offset: int) -> tuple[int, list[dict[str, Any]]]:
         with self._connection() as connection:

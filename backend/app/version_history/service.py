@@ -36,19 +36,35 @@ class VersionHistoryService:
                 f"Version number '{data.version_number}' already exists for API {api_id}"
             ) from exc
 
-    def list_versions(self, api_id: int, limit: int, offset: int) -> tuple[int, list[dict[str, Any]]]:
-        self._get_readable_api(api_id)
+    def list_versions(
+        self,
+        api_id: int,
+        actor: dict[str, Any],
+        limit: int,
+        offset: int,
+    ) -> tuple[int, list[dict[str, Any]]]:
+        self._get_readable_api(api_id, actor)
         return self.repository.list_versions(api_id, limit, offset)
 
-    def get_version(self, api_id: int, version_id: int) -> dict[str, Any]:
-        self._get_readable_api(api_id)
+    def get_version(
+        self,
+        api_id: int,
+        version_id: int,
+        actor: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._get_readable_api(api_id, actor)
         version = self.repository.get_version_detail(api_id, version_id)
         if version is None:
             raise VersionNotFoundError(api_id, version_id)
         return version
 
-    def get_specification(self, api_id: int, version_id: int) -> dict[str, Any]:
-        self._get_readable_api(api_id)
+    def get_specification(
+        self,
+        api_id: int,
+        version_id: int,
+        actor: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._get_readable_api(api_id, actor)
         specification = self.repository.get_specification(api_id, version_id)
         if specification is None:
             raise VersionNotFoundError(api_id, version_id)
@@ -57,12 +73,13 @@ class VersionHistoryService:
     def list_events(
         self,
         api_id: int,
+        actor: dict[str, Any],
         limit: int,
         offset: int,
         version_id: int | None,
         action: str | None,
     ) -> tuple[int, list[dict[str, Any]]]:
-        self._get_readable_api(api_id)
+        self._get_readable_api(api_id, actor)
         allowed_actions = {
             "API_CREATED",
             "VERSION_CREATED",
@@ -82,6 +99,39 @@ class VersionHistoryService:
             version_id,
             normalized_action,
         )
+
+    def get_access_policy(self, api_id: int, actor: dict[str, Any]) -> dict[str, Any]:
+        api = self._get_managed_api(api_id, actor)
+        return {
+            "api_id": api_id,
+            "visibility": str(api["history_visibility"]),
+            "allowed_users": self.repository.get_access_grants(api_id),
+        }
+
+    def replace_access_policy(
+        self,
+        api_id: int,
+        actor: dict[str, Any],
+        visibility: str,
+        allowed_user_ids: list[int],
+    ) -> dict[str, Any]:
+        normalized_visibility = visibility.strip().upper()
+        if normalized_visibility not in {"PUBLIC", "ENTERPRISE", "PRIVATE"}:
+            raise ValueError("visibility must be PUBLIC, ENTERPRISE, or PRIVATE")
+        normalized_user_ids = sorted(set(allowed_user_ids))
+        with self.repository.transaction():
+            self._get_managed_api(api_id, actor)
+            existing_user_ids = self.repository.get_existing_user_ids(normalized_user_ids)
+            missing_user_ids = sorted(set(normalized_user_ids) - existing_user_ids)
+            if missing_user_ids:
+                raise ValueError(f"Unknown allowed_user_ids: {missing_user_ids}")
+            self.repository.replace_access_policy(
+                api_id,
+                normalized_visibility,
+                normalized_user_ids,
+                actor["user_id"],
+            )
+        return self.get_access_policy(api_id, actor)
 
     def update_draft(
         self,
@@ -116,9 +166,26 @@ class VersionHistoryService:
             raise HistoryAccessDeniedError("Only the creator or enterprise admin can manage versions")
         return api
 
-    def _get_readable_api(self, api_id: int) -> dict[str, Any]:
+    def _get_readable_api(
+        self,
+        api_id: int,
+        actor: dict[str, Any],
+    ) -> dict[str, Any]:
         api = self.repository.get_api_context(api_id)
         if api is None:
+            raise VersionNotFoundError(api_id)
+        visibility = str(api["history_visibility"])
+        is_creator = api["submitted_by"] == actor["user_id"]
+        is_enterprise_member = api["enterprise_id"] == actor["enterprise_id"]
+        is_enterprise_admin = is_enterprise_member and actor["role"] == "ADMIN"
+        is_granted = self.repository.has_access_grant(api_id, actor["user_id"])
+        can_read = (
+            visibility == "PUBLIC"
+            or (visibility == "ENTERPRISE" and is_enterprise_member)
+            or (visibility == "PRIVATE" and (is_creator or is_enterprise_admin))
+            or is_granted
+        )
+        if not can_read:
             raise VersionNotFoundError(api_id)
         return api
 

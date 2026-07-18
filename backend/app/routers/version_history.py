@@ -11,6 +11,8 @@ from app.version_history import (
     VersionNotFoundError,
 )
 from app.version_history.schemas import (
+    HistoryAccessRequest,
+    HistoryAccessResponse,
     LifecycleHistoryResponse,
     SpecificationContentResponse,
     SpecificationMetadataResponse,
@@ -46,11 +48,11 @@ def list_versions(
     api_id: int,
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-    _current_user: dict[str, Any] = Depends(get_current_user),
+    current_user: dict[str, Any] = Depends(get_current_user),
     service: VersionHistoryService = Depends(get_version_history_service),
 ) -> VersionListResponse:
     try:
-        total, items = service.list_versions(api_id, limit, offset)
+        total, items = service.list_versions(api_id, current_user, limit, offset)
         return VersionListResponse(api_id=api_id, total=total, limit=limit, offset=offset, items=items)
     except Exception as exc:
         _raise_http_error(exc)
@@ -60,11 +62,11 @@ def list_versions(
 def get_version(
     api_id: int,
     version_id: int,
-    _current_user: dict[str, Any] = Depends(get_current_user),
+    current_user: dict[str, Any] = Depends(get_current_user),
     service: VersionHistoryService = Depends(get_version_history_service),
 ) -> VersionDetailResponse:
     try:
-        version = service.get_version(api_id, version_id)
+        version = service.get_version(api_id, version_id, current_user)
         version_fields = {
             key: value for key, value in version.items() if key != "validation_runs"
         }
@@ -90,11 +92,13 @@ def get_version(
 def get_version_specification(
     api_id: int,
     version_id: int,
-    _current_user: dict[str, Any] = Depends(get_current_user),
+    current_user: dict[str, Any] = Depends(get_current_user),
     service: VersionHistoryService = Depends(get_version_history_service),
 ) -> SpecificationContentResponse:
     try:
-        return SpecificationContentResponse(**service.get_specification(api_id, version_id))
+        return SpecificationContentResponse(
+            **service.get_specification(api_id, version_id, current_user)
+        )
     except Exception as exc:
         _raise_http_error(exc)
 
@@ -106,11 +110,18 @@ def list_lifecycle_history(
     offset: int = Query(default=0, ge=0),
     version_id: int | None = Query(default=None),
     action: str | None = Query(default=None),
-    _current_user: dict[str, Any] = Depends(get_current_user),
+    current_user: dict[str, Any] = Depends(get_current_user),
     service: VersionHistoryService = Depends(get_version_history_service),
 ) -> LifecycleHistoryResponse:
     try:
-        total, items = service.list_events(api_id, limit, offset, version_id, action)
+        total, items = service.list_events(
+            api_id,
+            current_user,
+            limit,
+            offset,
+            version_id,
+            action,
+        )
         return LifecycleHistoryResponse(
             api_id=api_id,
             total=total,
@@ -151,5 +162,36 @@ def update_draft_version(
     try:
         service.update_draft(api_id, version_id, current_user, request.to_write())
         return VersionMutationResponse(api_id=api_id, version_id=version_id, status="DRAFT")
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.get("/{api_id}/history-access", response_model=HistoryAccessResponse)
+def get_history_access(
+    api_id: int,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    service: VersionHistoryService = Depends(get_version_history_service),
+) -> HistoryAccessResponse:
+    try:
+        return HistoryAccessResponse(**service.get_access_policy(api_id, current_user))
+    except Exception as exc:
+        _raise_http_error(exc)
+
+
+@router.put("/{api_id}/history-access", response_model=HistoryAccessResponse)
+def replace_history_access(
+    api_id: int,
+    request: HistoryAccessRequest,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    service: VersionHistoryService = Depends(get_version_history_service),
+) -> HistoryAccessResponse:
+    try:
+        policy = service.replace_access_policy(
+            api_id,
+            current_user,
+            request.visibility,
+            request.allowed_user_ids,
+        )
+        return HistoryAccessResponse(**policy)
     except Exception as exc:
         _raise_http_error(exc)
