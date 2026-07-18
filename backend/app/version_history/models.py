@@ -16,4 +16,3 @@ class VersionWrite:
     auth_description: str | None
     security_scheme_name: str | None
     spec_content: str
-

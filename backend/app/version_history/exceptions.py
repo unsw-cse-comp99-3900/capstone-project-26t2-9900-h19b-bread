@@ -14,4 +14,3 @@ class VersionConflictError(VersionHistoryError):
 
 class HistoryAccessDeniedError(VersionHistoryError):
     pass
-
