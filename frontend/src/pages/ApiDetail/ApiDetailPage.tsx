@@ -67,16 +67,18 @@ const ApiDetailPage: React.FC = () => {
   if (!api) {
     return (
       <PublisherLayout>
-        <Result
-          status="404"
-          title="API not found"
-          subTitle="This API does not exist or is no longer available."
-          extra={
-            <Button type="primary" onClick={() => navigate('/homepage')}>
-              Back to Dashboard
-            </Button>
-          }
-        />
+        <div className="apd-empty">
+          <Result
+            status="404"
+            title="API not found"
+            subTitle="This API does not exist or is no longer available."
+            extra={
+              <Button type="primary" onClick={() => navigate('/homepage')}>
+                Back to Dashboard
+              </Button>
+            }
+          />
+        </div>
       </PublisherLayout>
     );
   }
@@ -106,40 +108,48 @@ const ApiDetailPage: React.FC = () => {
             Back to Dashboard
           </Button>
 
-          {isOwner && (
-            <Space>
-              <Tooltip title="Update (coming soon)">
-                <Button icon={<EditOutlined />} disabled>
-                  Edit
-                </Button>
-              </Tooltip>
-              <Tooltip title="Schema Mapping (coming soon)">
-                <Button icon={<SwapOutlined />} disabled>
-                  Mapping
-                </Button>
-              </Tooltip>
-              <Popconfirm
-                title="Withdraw this API?"
-                description="It will be removed from the repository."
-                okText="Withdraw"
-                okButtonProps={{ danger: true }}
-                cancelText="Cancel"
-                disabled={currentStatus === 'Withdrawn'}
-                onConfirm={handleWithdraw}
+          <Space wrap>
+            <Tooltip title={isOwner ? 'Update (coming soon)' : 'Only the creator can edit this API'}>
+              <Button icon={<EditOutlined />} disabled>
+                Edit
+              </Button>
+            </Tooltip>
+            <Tooltip title={isOwner ? 'Schema Mapping (coming soon)' : 'Only the creator can map this API'}>
+              <Button icon={<SwapOutlined />} disabled>
+                Mapping
+              </Button>
+            </Tooltip>
+            <Popconfirm
+              title="Withdraw this API?"
+              description="It will be removed from the repository."
+              okText="Withdraw"
+              okButtonProps={{ danger: true }}
+              cancelText="Cancel"
+              disabled={!isOwner || currentStatus === 'Withdrawn'}
+              onConfirm={handleWithdraw}
+            >
+              <Tooltip
+                title={
+                  !isOwner
+                    ? 'Only the creator can withdraw this API'
+                    : currentStatus === 'Withdrawn'
+                      ? 'Already withdrawn'
+                      : 'Withdraw'
+                }
               >
                 <Button
                   danger
                   icon={<DeleteOutlined />}
-                  disabled={currentStatus === 'Withdrawn'}
+                  disabled={!isOwner || currentStatus === 'Withdrawn'}
                 >
                   Withdraw
                 </Button>
-              </Popconfirm>
-            </Space>
-          )}
+              </Tooltip>
+            </Popconfirm>
+          </Space>
         </div>
 
-        <Card className="apd-hero-card">
+        <Card className="apd-glass apd-hero-card" bordered={false}>
           <div className="apd-hero">
             <div>
               <Title level={3} className="apd-hero__title">{api.name}</Title>
@@ -147,9 +157,9 @@ const ApiDetailPage: React.FC = () => {
                 {api.description}
               </Paragraph>
             </div>
-            <Space size={8} wrap>
+            <Space size={8} wrap className="apd-hero__tags">
               <Tag color={protocolColorMap[api.protocol]}>{api.protocol}</Tag>
-              <Tag icon={icon} color={color} style={{ fontWeight: 500 }}>
+              <Tag icon={icon} color={color}>
                 {currentStatus}
               </Tag>
             </Space>
@@ -158,7 +168,7 @@ const ApiDetailPage: React.FC = () => {
 
         <Row gutter={[16, 16]} className="apd-cards">
           <Col xs={24} lg={14}>
-            <Card title="API Information" className="apd-info-card">
+            <Card title="API Information" className="apd-glass apd-info-card" bordered={false}>
               <Descriptions column={1} size="middle" bordered>
                 <Descriptions.Item label="API Name">{api.name}</Descriptions.Item>
                 <Descriptions.Item label="Endpoint URL">
@@ -179,7 +189,7 @@ const ApiDetailPage: React.FC = () => {
           </Col>
 
           <Col xs={24} lg={10}>
-            <Card title="Ownership & Timeline" className="apd-info-card">
+            <Card title="Ownership & Timeline" className="apd-glass apd-info-card" bordered={false}>
               <Descriptions column={1} size="middle" bordered>
                 <Descriptions.Item label="Creator">{api.creator}</Descriptions.Item>
                 <Descriptions.Item label="Created At">
@@ -194,7 +204,7 @@ const ApiDetailPage: React.FC = () => {
           </Col>
         </Row>
 
-        <Card title="Version History" className="apd-history-card">
+        <Card title="Version History" className="apd-glass apd-history-card" bordered={false}>
           {api.history.length === 0 ? (
             <Text type="secondary">No history records yet.</Text>
           ) : (
