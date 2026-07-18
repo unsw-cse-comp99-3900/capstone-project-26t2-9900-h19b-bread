@@ -1,28 +1,19 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
-  Layout,
-  Menu,
   Button,
-  Avatar,
   Table,
   Tag,
   Space,
   Typography,
-  Divider,
   Tooltip,
   Popconfirm,
   message,
+  Tabs,
+  Input,
+  Select,
 } from 'antd';
 import {
-  UserOutlined,
-  LogoutOutlined,
   PlusOutlined,
-  SearchOutlined,
-  PartitionOutlined,
-  CloudUploadOutlined,
-  ApiOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
   EditOutlined,
   SwapOutlined,
   DeleteOutlined,
@@ -31,55 +22,21 @@ import {
   ClockCircleOutlined,
   MinusCircleOutlined,
   SyncOutlined,
+  SearchOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { useSelector, useDispatch } from 'react-redux';
+import { useSelector } from 'react-redux';
 import type { TableColumnsType } from 'antd';
 import APIInfoForm from '../../components/APIInfoForm';
-import { logout } from '../../store/authSlice';
-import type { RootState, AppDispatch } from '../../store';
-import { withdrawApi } from '../../services/lifecycle';
-import { getSubmissions } from '../../services/submission';
-import type { SubmissionListItem } from '../../services/submission';
+import PublisherLayout from '../../components/PublisherLayout';
+import type { RootState } from '../../store';
+import type { ApiRecord, ApiStatus } from '../../types/api';
+import { getMockApiList } from '../../mock/dashboardApis';
 import './Homepage.scss';
 
-const { Header, Sider, Content } = Layout;
 const { Title } = Typography;
 
-type ApiStatus = 'Published' | 'Rejected' | 'Draft' | 'Validating' | 'Withdrawn';
-
-interface ApiRecord {
-  key:        string;
-  name:       string;
-  protocol:   string;
-  endpoint:   string;
-  authMethod: string;
-  category:   string;
-  status:     ApiStatus;
-}
-
-function mapStatus(s: string): ApiStatus {
-  const m: Record<string, ApiStatus> = {
-    DRAFT:      'Draft',
-    VALIDATING: 'Validating',
-    REJECTED:   'Rejected',
-    PUBLISHED:  'Published',
-    WITHDRAWN:  'Withdrawn',
-  };
-  return m[s.toUpperCase()] ?? 'Draft';
-}
-
-function toRecord(item: SubmissionListItem): ApiRecord {
-  return {
-    key:        String(item.api_id),
-    name:       item.api_name,
-    protocol:   item.protocol_type,
-    endpoint:   item.endpoint_url,
-    authMethod: '—',
-    category:   item.capability_category,
-    status:     mapStatus(item.status),
-  };
-}
+type ListTab = 'all' | 'mine';
 
 const statusConfig: Record<ApiStatus, { color: string; icon: React.ReactNode }> = {
   Published:  { color: 'success',    icon: <CheckCircleOutlined /> },
@@ -94,72 +51,94 @@ const protocolColorMap: Record<string, string> = {
   SOAP: 'purple',
 };
 
-const navItems = [
-  { key: 'discovery',   icon: <SearchOutlined />,      label: 'Discovery Service' },
-  { key: 'composition', icon: <PartitionOutlined />,   label: 'Composition Service' },
-  { key: 'publisher',   icon: <CloudUploadOutlined />, label: 'API Publisher' },
+const STATUS_FILTER_OPTIONS = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'Published', label: 'Published' },
+  { value: 'Rejected', label: 'Rejected' },
+  { value: 'Draft', label: 'Draft' },
+  { value: 'Validating', label: 'Validating' },
+  { value: 'Withdrawn', label: 'Withdrawn' },
 ];
 
 const HomePage: React.FC = () => {
-  const [selectedKey, setSelectedKey] = useState('publisher');
-  const [collapsed, setCollapsed]     = useState(false);
-  const [modalOpen, setModalOpen]     = useState(false);
-  const [tableData, setTableData]     = useState<ApiRecord[]>([]);
-  const [loading, setLoading]         = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [listTab, setListTab] = useState<ListTab>('all');
+  const [keyword, setKeyword] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [tableData, setTableData] = useState<ApiRecord[]>(() => getMockApiList());
   const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
 
   const navigate = useNavigate();
-  const dispatch = useDispatch<AppDispatch>();
-  const user     = useSelector((s: RootState) => s.auth.user);
+  const user = useSelector((s: RootState) => s.auth.user);
 
-  const loadSubmissions = useCallback(async () => {
-    setLoading(true);
-    try {
-      const items = await getSubmissions();
-      setTableData(items.map(toRecord));
-    } catch {
-      // error shown by request interceptor
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const filteredData = useMemo(() => {
+    const q = keyword.trim().toLowerCase();
+    return tableData.filter(row => {
+      const isMine =
+        !!user &&
+        (row.creatorId === user.user_id ||
+          row.creator.toLowerCase() === user.email.toLowerCase());
 
-  useEffect(() => { void loadSubmissions(); }, [loadSubmissions]);
+      if (listTab === 'mine' && !isMine) return false;
 
-  const handleLogout = () => {
-    dispatch(logout());
-    navigate('/login');
-  };
+      if (statusFilter !== 'all' && row.status !== statusFilter) return false;
 
-  const handleWithdraw = async (record: ApiRecord) => {
-    if (!user) return;
+      if (!q) return true;
+      return (
+        row.name.toLowerCase().includes(q) ||
+        row.endpoint.toLowerCase().includes(q) ||
+        row.creator.toLowerCase().includes(q) ||
+        row.status.toLowerCase().includes(q) ||
+        row.category.toLowerCase().includes(q)
+      );
+    });
+  }, [tableData, listTab, keyword, statusFilter, user]);
+
+  const handleWithdraw = (record: ApiRecord) => {
     setWithdrawingId(record.key);
-    try {
-      await withdrawApi(record.key, {
-        actor_id: Number(user.user_id),
-        reason:   'Withdrawn by publisher',
-      });
+    setTimeout(() => {
+      setTableData(prev =>
+        prev.map(r =>
+          r.key === record.key
+            ? {
+                ...r,
+                status: 'Withdrawn' as ApiStatus,
+                updatedAt: new Date().toISOString(),
+                history: [
+                  {
+                    version: r.history[0]?.version ?? 'v1.0',
+                    action: 'Withdrawn',
+                    actor: user?.email ?? 'unknown',
+                    note: 'Withdrawn by publisher (mock).',
+                    changedAt: new Date().toISOString(),
+                  },
+                  ...r.history,
+                ],
+              }
+            : r,
+        ),
+      );
       message.success(`"${record.name}" has been withdrawn.`);
-      loadSubmissions();
-    } catch {
-      // error already shown by request interceptor
-    } finally {
       setWithdrawingId(null);
-    }
+    }, 400);
   };
 
-  const handleFormComplete = () => { loadSubmissions(); };
-
-  const columns: TableColumnsType<ApiRecord> = [
+  const baseColumns: TableColumnsType<ApiRecord> = [
     {
       title:     'API Name',
       dataIndex: 'name',
       key:       'name',
       width:     180,
       ellipsis:  { showTitle: false },
-      render: (name: string) => (
+      render: (name: string, record) => (
         <Tooltip title={name} placement="topLeft">
-          <span style={{ cursor: 'default' }}>{name}</span>
+          <Button
+            type="link"
+            className="hp-api-name-link"
+            onClick={() => navigate(`/apis/${record.key}`)}
+          >
+            {name}
+          </Button>
         </Tooltip>
       ),
     },
@@ -196,7 +175,7 @@ const HomePage: React.FC = () => {
       dataIndex: 'category',
       key:       'category',
       align:     'center',
-      width:     150,
+      width:     140,
     },
     {
       title:     'Status',
@@ -207,174 +186,131 @@ const HomePage: React.FC = () => {
       render: (status: ApiStatus) => {
         const { color, icon } = statusConfig[status];
         return (
-          <Tag
-            icon={icon}
-            color={color}
-            style={{ fontWeight: 500, fontSize: 12 }}
-          >
+          <Tag icon={icon} color={color} style={{ fontWeight: 500, fontSize: 12 }}>
             {status}
           </Tag>
         );
       },
     },
-    {
-      title:  'Operate',
-      key:    'operate',
-      align:  'center',
-      width:  108,
-      render: (_, record) => (
-        <Space size={6}>
-          <Tooltip title="Update (coming soon)">
-            <Button
-              size="small"
-              icon={<EditOutlined />}
-              className="hp-btn-update"
-              disabled
-            />
-          </Tooltip>
-          <Tooltip title="Schema Mapping (coming soon)">
-            <Button
-              size="small"
-              icon={<SwapOutlined />}
-              className="hp-btn-mapping"
-              disabled
-            />
-          </Tooltip>
-          <Popconfirm
-            title="Withdraw this API?"
-            description="It will be removed from the repository."
-            okText="Withdraw"
-            okButtonProps={{ danger: true }}
-            cancelText="Cancel"
-            disabled={record.status === 'Withdrawn'}
-            onConfirm={() => handleWithdraw(record)}
-          >
-            <Tooltip title={record.status === 'Withdrawn' ? 'Already withdrawn' : 'Withdraw'}>
-              <Button
-                size="small"
-                icon={<DeleteOutlined />}
-                className="hp-btn-withdraw"
-                loading={withdrawingId === record.key}
-                disabled={record.status === 'Withdrawn'}
-              />
-            </Tooltip>
-          </Popconfirm>
-        </Space>
-      ),
-    },
   ];
 
+  const creatorColumn: TableColumnsType<ApiRecord>[number] = {
+    title:     'Creator',
+    dataIndex: 'creator',
+    key:       'creator',
+    width:     170,
+    ellipsis:  { showTitle: false },
+    render: (creator: string) => (
+      <Tooltip title={creator} placement="topLeft">
+        <span>{creator}</span>
+      </Tooltip>
+    ),
+  };
+
+  const operateColumn: TableColumnsType<ApiRecord>[number] = {
+    title:  'Operate',
+    key:    'operate',
+    align:  'center',
+    width:  108,
+    render: (_, record) => (
+      <Space size={6}>
+        <Tooltip title="Update (coming soon)">
+          <Button size="small" icon={<EditOutlined />} className="hp-btn-update" disabled />
+        </Tooltip>
+        <Tooltip title="Schema Mapping (coming soon)">
+          <Button size="small" icon={<SwapOutlined />} className="hp-btn-mapping" disabled />
+        </Tooltip>
+        <Popconfirm
+          title="Withdraw this API?"
+          description="It will be removed from the repository."
+          okText="Withdraw"
+          okButtonProps={{ danger: true }}
+          cancelText="Cancel"
+          disabled={record.status === 'Withdrawn'}
+          onConfirm={() => handleWithdraw(record)}
+        >
+          <Tooltip title={record.status === 'Withdrawn' ? 'Already withdrawn' : 'Withdraw'}>
+            <Button
+              size="small"
+              icon={<DeleteOutlined />}
+              className="hp-btn-withdraw"
+              loading={withdrawingId === record.key}
+              disabled={record.status === 'Withdrawn'}
+            />
+          </Tooltip>
+        </Popconfirm>
+      </Space>
+    ),
+  };
+
+  const columns: TableColumnsType<ApiRecord> =
+    listTab === 'all'
+      ? [...baseColumns.slice(0, 3), creatorColumn, ...baseColumns.slice(3)]
+      : [...baseColumns, operateColumn];
+
   return (
-    <>
-    <Layout className="hp-root">
-      {/* ── Sidebar ── */}
-      <Sider
-        className="hp-sider"
-        width={200}
-        collapsedWidth={64}
-        collapsed={collapsed}
-        collapsible={false}
-      >
-        {/* Brand */}
-        <div className={`hp-sider__brand ${collapsed ? 'hp-sider__brand--collapsed' : ''}`}>
-          <div className="hp-sider__brand-icon">
-            <ApiOutlined />
-          </div>
-          {!collapsed && (
-            <span className="hp-sider__brand-name">API Ecosystem</span>
-          )}
-        </div>
-
-        <Divider className="hp-sider__divider" />
-
-        {/* Avatar */}
-        <div className={`hp-sider__avatar-wrap ${collapsed ? 'hp-sider__avatar-wrap--collapsed' : ''}`}>
-          <Avatar
-            size={collapsed ? 36 : 52}
-            icon={<UserOutlined />}
-            className="hp-sider__avatar"
-          />
-          {!collapsed && (
-            <span className="hp-sider__avatar-label">
-              {user?.email ?? 'Enterprise User'}
+    <PublisherLayout>
+      <div className="hp-card">
+        <div className="hp-card__header">
+          <div>
+            <Title level={5} className="hp-card__title">
+              API Publisher — Dashboard
+            </Title>
+            <span className="hp-card__desc">
+              Browse all published APIs or manage your own submissions
             </span>
-          )}
+          </div>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
+            Publish New API
+          </Button>
         </div>
 
-        <Divider className="hp-sider__divider" />
-
-        {/* Nav */}
-        <Menu
-          className="hp-menu"
-          mode="inline"
-          selectedKeys={[selectedKey]}
-          inlineCollapsed={collapsed}
-          onClick={({ key }) => setSelectedKey(key)}
-          items={navItems}
+        <Tabs
+          activeKey={listTab}
+          onChange={key => setListTab(key as ListTab)}
+          items={[
+            { key: 'all',  label: 'All APIs' },
+            { key: 'mine', label: 'My APIs' },
+          ]}
+          className="hp-tabs"
         />
 
-        {/* Collapse trigger */}
-        <div className="hp-sider__footer">
-          <Tooltip title={collapsed ? 'Expand' : 'Collapse'} placement="right">
-            <button
-              className="hp-sider__toggle"
-              onClick={() => setCollapsed(!collapsed)}
-            >
-              {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-            </button>
-          </Tooltip>
+        <div className="hp-toolbar">
+          <Input
+            allowClear
+            prefix={<SearchOutlined />}
+            placeholder="Search by name, URL, creator, or status"
+            value={keyword}
+            onChange={e => setKeyword(e.target.value)}
+            className="hp-toolbar__search"
+          />
+          <Select
+            value={statusFilter}
+            onChange={setStatusFilter}
+            options={STATUS_FILTER_OPTIONS}
+            className="hp-toolbar__status"
+          />
         </div>
-      </Sider>
 
-      <Layout>
-        {/* ── Header ── */}
-        <Header className="hp-header">
-          <Button
-            type="primary"
-            icon={<LogoutOutlined />}
-            onClick={handleLogout}
-          >
-            Log out
-          </Button>
-        </Header>
+        <Table<ApiRecord>
+          columns={columns}
+          dataSource={filteredData}
+          pagination={{ pageSize: 8, showSizeChanger: false }}
+          bordered
+          className="hp-table"
+          tableLayout="fixed"
+          locale={{ emptyText: 'No APIs match your filters.' }}
+        />
+      </div>
 
-        {/* ── Content ── */}
-        <Content className="hp-content">
-          <div className="hp-card">
-            <div className="hp-card__header">
-              <div>
-                <Title level={5} className="hp-card__title">
-                  API Publisher — My Published APIs
-                </Title>
-                <span className="hp-card__desc">
-                  Manage your enterprise e-invoicing APIs submitted to the ecosystem repository
-                </span>
-              </div>
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
-                Publish New API
-              </Button>
-            </div>
-
-            <Table<ApiRecord>
-              columns={columns}
-              dataSource={tableData}
-              loading={loading}
-              pagination={false}
-              bordered
-              className="hp-table"
-              tableLayout="fixed"
-            />
-          </div>
-        </Content>
-      </Layout>
-    </Layout>
-
-    <APIInfoForm
-      open={modalOpen}
-      onClose={() => setModalOpen(false)}
-      onComplete={handleFormComplete}
-    />
-    </>
+      <APIInfoForm
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        onComplete={() => {
+          message.info('Submission saved. List will refresh when the backend list API is ready.');
+        }}
+      />
+    </PublisherLayout>
   );
 };
 

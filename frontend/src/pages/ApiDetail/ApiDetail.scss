@@ -1,0 +1,64 @@
+.apd-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.apd-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.apd-hero-card {
+  .apd-hero {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+
+    &__title {
+      margin: 0 0 8px !important;
+    }
+
+    &__desc {
+      margin-bottom: 0 !important;
+      max-width: 720px;
+    }
+  }
+}
+
+.apd-cards {
+  margin-top: 0;
+}
+
+.apd-info-card,
+.apd-history-card {
+  .ant-card-head-title {
+    font-weight: 600;
+  }
+}
+
+.apd-history-item {
+  &__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+
+  &__meta {
+    font-size: 12px;
+    color: #8c8c8c;
+    margin-bottom: 4px;
+  }
+
+  &__note {
+    font-size: 13px;
+    color: #434343;
+  }
+}

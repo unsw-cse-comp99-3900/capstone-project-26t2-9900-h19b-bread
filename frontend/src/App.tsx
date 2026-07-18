@@ -4,6 +4,7 @@ import type { RootState } from './store';
 import Login from './pages/Init/Login';
 import Register from './pages/Init/Register';
 import HomePage from './pages/Homepage/HomePage';
+import ApiDetailPage from './pages/ApiDetail/ApiDetailPage';
 
 const ProtectedRoute = ({ element }: { element: React.ReactElement }) => {
   const token = useSelector((s: RootState) => s.auth.token);
@@ -23,6 +24,7 @@ function App() {
         <Route path="/login"     element={<GuestRoute element={<Login />} />} />
         <Route path="/register"  element={<GuestRoute element={<Register />} />} />
         <Route path="/homepage"  element={<ProtectedRoute element={<HomePage />} />} />
+        <Route path="/apis/:id"  element={<ProtectedRoute element={<ApiDetailPage />} />} />
         <Route path="*"          element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>

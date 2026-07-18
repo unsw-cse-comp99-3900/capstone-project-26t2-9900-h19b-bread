@@ -217,6 +217,39 @@
   }
 }
 
+.hp-tabs {
+  margin-bottom: 12px;
+}
+
+.hp-toolbar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+
+  &__search {
+    flex: 1;
+    min-width: 220px;
+    max-width: 420px;
+  }
+
+  &__status {
+    width: 160px;
+  }
+}
+
+.hp-api-name-link {
+  padding: 0 !important;
+  height: auto !important;
+  font-size: 13px !important;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
 // ─── Table ────────────────────────────────────────────────────────────────────
 .hp-table {
   .ant-table-thead > tr > th {
