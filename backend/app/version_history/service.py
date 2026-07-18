@@ -36,6 +36,53 @@ class VersionHistoryService:
                 f"Version number '{data.version_number}' already exists for API {api_id}"
             ) from exc
 
+    def list_versions(self, api_id: int, limit: int, offset: int) -> tuple[int, list[dict[str, Any]]]:
+        self._get_readable_api(api_id)
+        return self.repository.list_versions(api_id, limit, offset)
+
+    def get_version(self, api_id: int, version_id: int) -> dict[str, Any]:
+        self._get_readable_api(api_id)
+        version = self.repository.get_version_detail(api_id, version_id)
+        if version is None:
+            raise VersionNotFoundError(api_id, version_id)
+        return version
+
+    def get_specification(self, api_id: int, version_id: int) -> dict[str, Any]:
+        self._get_readable_api(api_id)
+        specification = self.repository.get_specification(api_id, version_id)
+        if specification is None:
+            raise VersionNotFoundError(api_id, version_id)
+        return specification
+
+    def list_events(
+        self,
+        api_id: int,
+        limit: int,
+        offset: int,
+        version_id: int | None,
+        action: str | None,
+    ) -> tuple[int, list[dict[str, Any]]]:
+        self._get_readable_api(api_id)
+        allowed_actions = {
+            "API_CREATED",
+            "VERSION_CREATED",
+            "SUBMIT",
+            "RESUBMIT",
+            "VALIDATION_PASSED",
+            "VALIDATION_FAILED",
+            "WITHDRAW",
+        }
+        normalized_action = action.strip().upper() if action is not None else None
+        if normalized_action is not None and normalized_action not in allowed_actions:
+            raise ValueError(f"Unsupported lifecycle action '{action}'")
+        return self.repository.list_events(
+            api_id,
+            limit,
+            offset,
+            version_id,
+            normalized_action,
+        )
+
     def update_draft(
         self,
         api_id: int,
@@ -69,6 +116,12 @@ class VersionHistoryService:
             raise HistoryAccessDeniedError("Only the creator or enterprise admin can manage versions")
         return api
 
+    def _get_readable_api(self, api_id: int) -> dict[str, Any]:
+        api = self.repository.get_api_context(api_id)
+        if api is None:
+            raise VersionNotFoundError(api_id)
+        return api
+
     def _validate_input(self, data: VersionWrite) -> None:
         version_number = data.version_number.strip()
         if not version_number or len(version_number) > 50:
@@ -83,4 +136,3 @@ class VersionHistoryService:
             raise ValueError("capability_category is required")
         if not data.spec_content.strip():
             raise ValueError("spec_content is required")
-

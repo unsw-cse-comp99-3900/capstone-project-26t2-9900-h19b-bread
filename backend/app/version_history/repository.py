@@ -54,6 +54,197 @@ class PostgresVersionHistoryRepository:
                 )
                 return cursor.fetchone()
 
+    def get_api_context(self, api_id: int) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        api_id,
+                        enterprise_id,
+                        submitted_by,
+                        status,
+                        current_version_id,
+                        last_published_version_id,
+                        history_visibility
+                    FROM api_submission
+                    WHERE api_id = %s
+                    """,
+                    (api_id,),
+                )
+                return cursor.fetchone()
+
+    def list_versions(self, api_id: int, limit: int, offset: int) -> tuple[int, list[dict[str, Any]]]:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT COUNT(*) AS total FROM api_version WHERE api_id = %s",
+                    (api_id,),
+                )
+                total = cursor.fetchone()["total"]
+                cursor.execute(
+                    """
+                    SELECT
+                        version.version_id,
+                        version.version_number,
+                        version.status,
+                        version.change_note,
+                        version.snapshot_origin,
+                        version.created_by,
+                        creator.name AS created_by_name,
+                        version.created_at,
+                        version.updated_at,
+                        version.version_id = submission.current_version_id AS is_current,
+                        version.version_id = submission.last_published_version_id AS is_last_published
+                    FROM api_version version
+                    JOIN api_submission submission ON submission.api_id = version.api_id
+                    JOIN app_user creator ON creator.user_id = version.created_by
+                    WHERE version.api_id = %s
+                    ORDER BY version.created_at DESC, version.version_id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (api_id, limit, offset),
+                )
+                rows = cursor.fetchall()
+        return total, rows
+
+    def get_version_detail(self, api_id: int, version_id: int) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        version.*,
+                        creator.name AS created_by_name,
+                        auth.auth_method,
+                        auth.auth_description,
+                        auth.security_scheme_name,
+                        auth.is_complete AS auth_is_complete,
+                        specification.specification_id,
+                        specification.spec_type,
+                        specification.source_type,
+                        specification.file_path,
+                        specification.spec_url,
+                        specification.checksum,
+                        specification.uploaded_at,
+                        version.version_id = submission.current_version_id AS is_current,
+                        version.version_id = submission.last_published_version_id AS is_last_published
+                    FROM api_version version
+                    JOIN api_submission submission ON submission.api_id = version.api_id
+                    JOIN app_user creator ON creator.user_id = version.created_by
+                    JOIN api_version_auth auth ON auth.version_id = version.version_id
+                    LEFT JOIN api_specification specification
+                      ON specification.version_id = version.version_id
+                    WHERE version.api_id = %s
+                      AND version.version_id = %s
+                    """,
+                    (api_id, version_id),
+                )
+                version = cursor.fetchone()
+                if version is None:
+                    return None
+                cursor.execute(
+                    """
+                    SELECT
+                        validation_run_id,
+                        overall_status,
+                        started_at,
+                        completed_at
+                    FROM validation_run
+                    WHERE api_id = %s
+                      AND version_id = %s
+                    ORDER BY started_at DESC, validation_run_id DESC
+                    """,
+                    (api_id, version_id),
+                )
+                runs = cursor.fetchall()
+                for run in runs:
+                    cursor.execute(
+                        """
+                        SELECT result_id, stage, status, message, error_detail, created_at
+                        FROM validation_result
+                        WHERE validation_run_id = %s
+                        ORDER BY result_id
+                        """,
+                        (run["validation_run_id"],),
+                    )
+                    run["results"] = cursor.fetchall()
+        version["validation_runs"] = runs
+        return version
+
+    def get_specification(self, api_id: int, version_id: int) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        specification.specification_id,
+                        specification.version_id,
+                        specification.spec_type,
+                        specification.source_type,
+                        specification.file_path,
+                        specification.spec_url,
+                        specification.raw_content,
+                        specification.checksum,
+                        specification.uploaded_at
+                    FROM api_specification specification
+                    JOIN api_version version ON version.version_id = specification.version_id
+                    WHERE version.api_id = %s
+                      AND version.version_id = %s
+                    """,
+                    (api_id, version_id),
+                )
+                return cursor.fetchone()
+
+    def list_events(
+        self,
+        api_id: int,
+        limit: int,
+        offset: int,
+        version_id: int | None,
+        action: str | None,
+    ) -> tuple[int, list[dict[str, Any]]]:
+        filters = ["event.api_id = %s"]
+        parameters: list[Any] = [api_id]
+        if version_id is not None:
+            filters.append("event.version_id = %s")
+            parameters.append(version_id)
+        if action is not None:
+            filters.append("event.action = %s")
+            parameters.append(action)
+        where_clause = " AND ".join(filters)
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT COUNT(*) AS total FROM api_lifecycle_event event WHERE {where_clause}",
+                    parameters,
+                )
+                total = cursor.fetchone()["total"]
+                cursor.execute(
+                    f"""
+                    SELECT
+                        event.event_id,
+                        event.api_id,
+                        event.version_id,
+                        event.action,
+                        event.from_status,
+                        event.to_status,
+                        event.actor_user_id,
+                        actor.name AS actor_name,
+                        event.validation_run_id,
+                        event.reason,
+                        event.created_at
+                    FROM api_lifecycle_event event
+                    LEFT JOIN app_user actor ON actor.user_id = event.actor_user_id
+                    WHERE {where_clause}
+                    ORDER BY event.created_at DESC, event.event_id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    [*parameters, limit, offset],
+                )
+                rows = cursor.fetchall()
+        return total, rows
+
     def get_version_status(self, version_id: int) -> str | None:
         with self._connection() as connection:
             with connection.cursor() as cursor:
@@ -265,4 +456,3 @@ class PostgresVersionHistoryRepository:
             auth_method = "OTHER"
         spec_type = "OPENAPI" if protocol_type == "REST" else "WSDL"
         return protocol_type, auth_method, spec_type
-
