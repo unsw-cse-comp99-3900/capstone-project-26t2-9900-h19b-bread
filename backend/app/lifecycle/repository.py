@@ -5,6 +5,7 @@ from typing import Protocol
 from app.lifecycle.enums import (
     ApiStatus,
     ApiVersionStatus,
+    LifecycleAction,
     ValidationOverallStatus,
     ValidationStage,
     ValidationStageStatus,
@@ -43,6 +44,29 @@ class LifecycleRepository(Protocol):
         status: ApiVersionStatus,
     ) -> None:
         """Update api_version.status for statuses supported by api_version_status."""
+
+    def archive_previous_published_version(
+        self,
+        api_id: int,
+        current_version_id: int,
+    ) -> None:
+        """Archive the prior published version, if a different one exists."""
+
+    def set_last_published_version(self, api_id: int, version_id: int) -> None:
+        """Point the API at its most recently published version."""
+
+    def create_lifecycle_event(
+        self,
+        api_id: int,
+        version_id: int,
+        action: LifecycleAction,
+        from_status: ApiStatus | None,
+        to_status: ApiStatus,
+        actor_user_id: int | None,
+        validation_run_id: int | None = None,
+        reason: str | None = None,
+    ) -> int:
+        """Append one immutable lifecycle transition event."""
 
     def create_validation_run(
         self,

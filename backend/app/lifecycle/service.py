@@ -30,6 +30,15 @@ class LifecycleService:
 
             self.repository.update_api_status(api_id, target_status)
             self.repository.update_version_status(version_id, ApiVersionStatus.VALIDATING)
+            self.repository.create_lifecycle_event(
+                api_id=api_id,
+                version_id=version_id,
+                action=action,
+                from_status=current_status,
+                to_status=target_status,
+                actor_user_id=actor_id,
+                reason="API submitted for validation.",
+            )
             updated_at = self.repository.get_api_updated_at(api_id)
 
         return LifecycleResult(
@@ -82,10 +91,24 @@ class LifecycleService:
                 message=validation_result.message,
                 error_detail=validation_result.error_detail,
             )
+            if target_status == ApiStatus.PUBLISHED:
+                self.repository.archive_previous_published_version(api_id, version_id)
             self.repository.update_api_status(api_id, target_status)
             self.repository.update_version_status(
                 version_id,
                 self._to_version_status(target_status),
+            )
+            if target_status == ApiStatus.PUBLISHED:
+                self.repository.set_last_published_version(api_id, version_id)
+            self.repository.create_lifecycle_event(
+                api_id=api_id,
+                version_id=version_id,
+                action=action,
+                from_status=current_status,
+                to_status=target_status,
+                actor_user_id=None,
+                validation_run_id=validation_run_id,
+                reason=validation_result.message or validation_result.error_detail,
             )
             updated_at = self.repository.get_api_updated_at(api_id)
 
@@ -121,6 +144,15 @@ class LifecycleService:
                 reason=reason,
             )
             self.repository.update_version_status(version_id, ApiVersionStatus.ARCHIVED)
+            self.repository.create_lifecycle_event(
+                api_id=api_id,
+                version_id=version_id,
+                action=LifecycleAction.WITHDRAW,
+                from_status=current_status,
+                to_status=target_status,
+                actor_user_id=actor_id,
+                reason=reason,
+            )
             updated_at = self.repository.get_api_updated_at(api_id)
 
         return LifecycleResult(
