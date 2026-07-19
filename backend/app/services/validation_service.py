@@ -553,7 +553,18 @@ def _run_domain_stage(
     strong_score = len(matched_categories)
 
     # --- Signal 3: explicit e-invoicing standard reference ---
-    standard_matched = any(marker in haystack for marker in _DOMAIN_STANDARD_MARKERS)
+    normalized_haystack = "".join(ch if ch.isalnum() else " " for ch in haystack)
+    haystack_tokens = normalized_haystack.split()
+
+    standard_matched = False
+    for marker in _DOMAIN_STANDARD_MARKERS:
+        if " " in marker and marker in normalized_haystack:
+            standard_matched = True
+            break
+        if " " not in marker and any(token.startswith(marker) for token in haystack_tokens):
+            standard_matched = True
+            break
+
     standard_score = 2 if standard_matched else 0
 
     # --- Signal 4: weak keywords (capped) ---
