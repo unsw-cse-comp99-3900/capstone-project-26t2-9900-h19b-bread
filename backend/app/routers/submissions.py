@@ -295,6 +295,10 @@ def create_submission_records(
                 (version_id, api_id),
             )
 
+            resolved_file_path = file_path
+            if resolved_file_path and "{api_id}" in resolved_file_path:
+                resolved_file_path = resolved_file_path.format(api_id=api_id)
+
             cursor.execute(
                 """
                 INSERT INTO api_specification (
@@ -311,7 +315,7 @@ def create_submission_records(
                     version_id,
                     spec_type,
                     source_type,
-                    file_path,
+                    resolved_file_path,
                     spec_url,
                     request.spec_content,
                 ),
