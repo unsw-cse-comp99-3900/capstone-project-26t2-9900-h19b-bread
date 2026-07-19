@@ -7,4 +7,5 @@ pytest==8.3.5
 psycopg[binary]==3.3.4
 python-dotenv==1.0.1
 python-jose[cryptography]==3.3.0
-python-multipart
+python-multipart==0.0.32
+jsonschema==4.26.0
