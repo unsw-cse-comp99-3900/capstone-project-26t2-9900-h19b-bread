@@ -210,12 +210,13 @@ def _get_nested(doc: Dict[str, Any], path: str) -> Any:
 
     parts = _split_path(path)
     node = doc
-    for part in parts:
+    for idx, part in enumerate(parts):
         if node is None:
             return None
         if isinstance(node, list):
             # If mid-path and hit a list, map the remainder over items.
-            return [_get_nested(item, ".".join(parts[parts.index(part):])) for item in node]
+            remainder = ".".join(parts[idx:])
+            return [_get_nested(item, remainder) for item in node]
         node = node.get(part) if isinstance(node, dict) else None
     return node
 
