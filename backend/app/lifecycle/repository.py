@@ -21,6 +21,9 @@ class LifecycleRepository(Protocol):
     def get_api_status(self, api_id: int) -> ApiStatus | None:
         """Read api_submission.status for the given api_id."""
 
+    def get_api_submitted_by(self, api_id: int) -> int | None:
+        """Return the API creator used for lifecycle write authorization."""
+
     def get_api_updated_at(self, api_id: int) -> datetime | None:
         """Read api_submission.updated_at for the given api_id."""
 

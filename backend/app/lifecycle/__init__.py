@@ -9,6 +9,7 @@ from app.lifecycle.enums import (
 )
 from app.lifecycle.exceptions import (
     ApiNotFoundError,
+    ApiPermissionError,
     CurrentVersionNotFoundError,
     InvalidStatusTransitionError,
 )
@@ -24,6 +25,7 @@ from app.lifecycle.state_machine import (
 __all__ = [
     "ALLOWED_TRANSITIONS",
     "ApiNotFoundError",
+    "ApiPermissionError",
     "ApiStatus",
     "ApiVersionStatus",
     "CurrentVersionNotFoundError",

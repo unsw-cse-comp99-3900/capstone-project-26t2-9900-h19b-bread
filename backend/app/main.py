@@ -5,6 +5,7 @@ from psycopg.errors import IntegrityError
 
 from app.lifecycle import (
     ApiNotFoundError,
+    ApiPermissionError,
     CurrentVersionNotFoundError,
     InvalidStatusTransitionError,
 )
@@ -43,6 +44,17 @@ async def handle_version_not_found(
     return JSONResponse(
         status_code=404,
         content={"error": "CurrentVersionNotFound", "message": str(exc)},
+    )
+
+
+@app.exception_handler(ApiPermissionError)
+async def handle_api_permission_error(
+    request: Request,
+    exc: ApiPermissionError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=403,
+        content={"error": "ApiPermissionDenied", "message": str(exc)},
     )
 
 

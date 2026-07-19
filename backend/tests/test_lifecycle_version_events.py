@@ -1,7 +1,10 @@
 from contextlib import contextmanager
 from datetime import datetime
 
+import pytest
+
 from app.lifecycle.enums import ApiStatus, ValidationStage, VersionEventType
+from app.lifecycle.exceptions import ApiPermissionError
 from app.lifecycle.schemas import ValidationResultInput
 from app.lifecycle.service import LifecycleService
 
@@ -20,6 +23,9 @@ class FakeLifecycleRepository:
 
     def get_api_status(self, api_id):
         return self.status
+
+    def get_api_submitted_by(self, api_id):
+        return 42
 
     def get_api_updated_at(self, api_id):
         return datetime(2026, 7, 19)
@@ -103,3 +109,22 @@ def test_withdraw_records_archive_event_with_actor() -> None:
     assert repository.events[0]["event_type"] == VersionEventType.ARCHIVED
     assert repository.events[0]["actor_user_id"] == 42
     assert repository.events[0]["to_status"].value == "ARCHIVED"
+
+
+def test_non_creator_cannot_submit() -> None:
+    repository = FakeLifecycleRepository(ApiStatus.DRAFT)
+
+    with pytest.raises(ApiPermissionError):
+        LifecycleService(repository).submit_api(api_id=5, actor_id=99)
+
+
+def test_global_admin_can_withdraw_another_users_api() -> None:
+    repository = FakeLifecycleRepository(ApiStatus.PUBLISHED)
+
+    result = LifecycleService(repository).withdraw_api(
+        api_id=5,
+        actor_id=99,
+        is_admin=True,
+    )
+
+    assert result.status == ApiStatus.WITHDRAWN

@@ -17,6 +17,11 @@ class CurrentVersionNotFoundError(LifecycleError):
         super().__init__(f"Current API version not found for API submission: {api_id}")
 
 
+class ApiPermissionError(LifecycleError):
+    def __init__(self) -> None:
+        super().__init__("Only the API creator or an administrator may change lifecycle state")
+
+
 class InvalidStatusTransitionError(LifecycleError):
     def __init__(self, from_status: ApiStatus, to_status: ApiStatus) -> None:
         self.from_status = from_status

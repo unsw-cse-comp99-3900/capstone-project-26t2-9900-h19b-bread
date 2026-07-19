@@ -35,8 +35,17 @@ class SubmissionCoordinator:
         self.service = service
         self.validate = validate
 
-    def submit_only(self, api_id: int, actor_id: int) -> LifecycleResult:
-        return self.service.submit_api(api_id=api_id, actor_id=actor_id)
+    def submit_only(
+        self,
+        api_id: int,
+        actor_id: int,
+        is_admin: bool = False,
+    ) -> LifecycleResult:
+        return self.service.submit_api(
+            api_id=api_id,
+            actor_id=actor_id,
+            is_admin=is_admin,
+        )
 
     def submit_and_validate(
         self,
@@ -44,8 +53,13 @@ class SubmissionCoordinator:
         actor_id: int,
         protocol: Protocol,
         spec_content: str,
+        is_admin: bool = False,
     ) -> LifecycleResult:
-        self.service.submit_api(api_id=api_id, actor_id=actor_id)
+        self.service.submit_api(
+            api_id=api_id,
+            actor_id=actor_id,
+            is_admin=is_admin,
+        )
 
         response = self.validate(protocol, spec_content)
         passed = response.overall_status == ValidationStatus.PASS

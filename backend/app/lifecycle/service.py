@@ -6,7 +6,11 @@ from app.lifecycle.enums import (
     ValidationStageStatus,
     VersionEventType,
 )
-from app.lifecycle.exceptions import ApiNotFoundError, CurrentVersionNotFoundError
+from app.lifecycle.exceptions import (
+    ApiNotFoundError,
+    ApiPermissionError,
+    CurrentVersionNotFoundError,
+)
 from app.lifecycle.repository import LifecycleRepository
 from app.lifecycle.schemas import LifecycleResult, ValidationResultInput
 from app.lifecycle.state_machine import ensure_transition_allowed
@@ -16,9 +20,15 @@ class LifecycleService:
     def __init__(self, repository: LifecycleRepository) -> None:
         self.repository = repository
 
-    def submit_api(self, api_id: int, actor_id: int) -> LifecycleResult:
+    def submit_api(
+        self,
+        api_id: int,
+        actor_id: int,
+        is_admin: bool = False,
+    ) -> LifecycleResult:
         with self.repository.transaction():
             current_status = self._get_required_status(api_id)
+            self._ensure_actor_can_manage(api_id, actor_id, is_admin)
             target_status = ApiStatus.VALIDATING
             ensure_transition_allowed(current_status, target_status)
 
@@ -133,9 +143,11 @@ class LifecycleService:
         api_id: int,
         actor_id: int,
         reason: str | None = None,
+        is_admin: bool = False,
     ) -> LifecycleResult:
         with self.repository.transaction():
             current_status = self._get_required_status(api_id)
+            self._ensure_actor_can_manage(api_id, actor_id, is_admin)
             target_status = ApiStatus.WITHDRAWN
             ensure_transition_allowed(current_status, target_status)
 
@@ -189,6 +201,17 @@ class LifecycleService:
         if version_id is None:
             raise CurrentVersionNotFoundError(api_id)
         return version_id
+
+    def _ensure_actor_can_manage(
+        self,
+        api_id: int,
+        actor_id: int,
+        is_admin: bool,
+    ) -> None:
+        if is_admin:
+            return
+        if self.repository.get_api_submitted_by(api_id) != actor_id:
+            raise ApiPermissionError()
 
     def _to_version_status(self, status: ApiStatus) -> ApiVersionStatus:
         if status == ApiStatus.WITHDRAWN:

@@ -62,6 +62,16 @@ class PostgresLifecycleRepository:
             return None
         return _to_api_status(row["status"])
 
+    def get_api_submitted_by(self, api_id: int) -> int | None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT submitted_by FROM api_submission WHERE api_id = %s",
+                    (api_id,),
+                )
+                row = cursor.fetchone()
+        return None if row is None else row["submitted_by"]
+
     def get_api_updated_at(self, api_id: int) -> datetime | None:
         with self._connection() as connection:
             with connection.cursor() as cursor:
