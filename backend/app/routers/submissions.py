@@ -93,11 +93,17 @@ def map_auth_method(auth_method: str) -> str:
 
 
 def map_submission_status(overall_status: str) -> str:
-    return "DRAFT"
+    if overall_status == "pass":
+        return "DRAFT"
+
+    return "REJECTED"
 
 
 def map_version_status(overall_status: str) -> str:
-    return "DRAFT"
+    if overall_status == "pass":
+        return "DRAFT"
+
+    return "REJECTED"
 
 
 def map_validation_overall_status(overall_status: str) -> str:
@@ -150,7 +156,11 @@ def create_submission(
 
     overall_status_value = to_plain_value(validation_result.overall_status)
 
-    response_submission_status = "DRAFT"
+    response_submission_status = (
+        "validated"
+        if overall_status_value == "pass"
+        else "rejected"
+    )
 
     protocol_type = map_protocol(request.protocol)
     spec_type = map_spec_type(protocol_type)
@@ -171,14 +181,31 @@ def create_submission(
                     INSERT INTO api_submission (
                         enterprise_id,
                         submitted_by,
+                        api_name,
+                        endpoint_url,
+                        protocol_type,
+                        input_format,
+                        output_format,
+                        capability_category,
+                        description,
                         status
                     )
-                    VALUES (%s, %s, %s)
+                    VALUES (
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s
+                    )
                     RETURNING api_id;
                     """,
                     (
                         enterprise_id,
                         submitted_by,
+                        request.api_name,
+                        request.endpoint_url,
+                        protocol_type,
+                        request.input_format,
+                        request.output_format,
+                        request.capability_category,
+                        request.description,
                         db_submission_status,
                     ),
                 )
@@ -193,19 +220,9 @@ def create_submission(
                         created_by,
                         version_number,
                         change_note,
-                        status,
-                        api_name,
-                        endpoint_url,
-                        protocol_type,
-                        input_format,
-                        output_format,
-                        capability_category,
-                        description
+                        status
                     )
-                    VALUES (
-                        %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s
-                    )
+                    VALUES (%s, %s, %s, %s, %s)
                     RETURNING version_id;
                     """,
                     (
@@ -214,28 +231,11 @@ def create_submission(
                         "v1.0",
                         "Initial submission created from Submission API.",
                         db_version_status,
-                        request.api_name,
-                        request.endpoint_url,
-                        protocol_type,
-                        request.input_format,
-                        request.output_format,
-                        request.capability_category,
-                        request.description,
                     ),
                 )
 
                 version_row = cursor.fetchone()
                 version_id = version_row["version_id"]
-
-                cursor.execute(
-                    """
-                    UPDATE api_submission
-                    SET current_version_id = %s,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE api_id = %s;
-                    """,
-                    (version_id, api_id),
-                )
 
                 cursor.execute(
                     """
@@ -258,8 +258,8 @@ def create_submission(
 
                 cursor.execute(
                     """
-                        INSERT INTO api_version_auth (
-                            version_id,
+                    INSERT INTO auth_metadata (
+                        api_id,
                         auth_method,
                         auth_description,
                         security_scheme_name,
@@ -268,31 +268,10 @@ def create_submission(
                     VALUES (%s, %s, %s, %s, TRUE);
                     """,
                     (
-                        version_id,
+                        api_id,
                         auth_method,
                         f"{auth_method} authentication provided during submission.",
                         auth_method,
-                    ),
-                )
-
-                cursor.execute(
-                    """
-                    INSERT INTO api_lifecycle_event (
-                        api_id,
-                        version_id,
-                        action,
-                        from_status,
-                        to_status,
-                        actor_user_id,
-                        reason
-                    )
-                    VALUES (%s, %s, 'API_CREATED', NULL, 'DRAFT', %s, %s);
-                    """,
-                    (
-                        api_id,
-                        version_id,
-                        submitted_by,
-                        "Initial submission created from Submission API.",
                     ),
                 )
 
@@ -380,21 +359,19 @@ def list_submissions(
                 cursor.execute(
                     """
                     SELECT
-                        submission.api_id,
-                        version.api_name,
-                        version.endpoint_url,
-                        version.protocol_type,
-                        version.input_format,
-                        version.output_format,
-                        version.capability_category,
-                        submission.status,
-                        submission.created_at,
-                        submission.updated_at
-                    FROM api_submission submission
-                    JOIN api_version version
-                      ON version.version_id = submission.current_version_id
-                    WHERE submission.enterprise_id = %s
-                    ORDER BY submission.api_id DESC;
+                        api_id,
+                        api_name,
+                        endpoint_url,
+                        protocol_type,
+                        input_format,
+                        output_format,
+                        capability_category,
+                        status,
+                        created_at,
+                        updated_at
+                    FROM api_submission
+                    WHERE enterprise_id = %s
+                    ORDER BY api_id DESC;
                     """,
                     (enterprise_id,),
                 )
@@ -442,14 +419,31 @@ def save_draft(
                     INSERT INTO api_submission (
                         enterprise_id,
                         submitted_by,
+                        api_name,
+                        endpoint_url,
+                        protocol_type,
+                        input_format,
+                        output_format,
+                        capability_category,
+                        description,
                         status
                     )
-                    VALUES (%s, %s, 'DRAFT')
+                    VALUES (
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, 'DRAFT'
+                    )
                     RETURNING api_id;
                     """,
                     (
                         enterprise_id,
                         submitted_by,
+                        request.api_name,
+                        request.endpoint_url,
+                        protocol_type,
+                        request.input_format,
+                        request.output_format,
+                        request.capability_category,
+                        request.description,
                     ),
                 )
 
@@ -463,19 +457,9 @@ def save_draft(
                         created_by,
                         version_number,
                         change_note,
-                        status,
-                        api_name,
-                        endpoint_url,
-                        protocol_type,
-                        input_format,
-                        output_format,
-                        capability_category,
-                        description
+                        status
                     )
-                    VALUES (
-                        %s, %s, %s, %s, 'DRAFT',
-                        %s, %s, %s, %s, %s, %s, %s
-                    )
+                    VALUES (%s, %s, %s, %s, 'DRAFT')
                     RETURNING version_id;
                     """,
                     (
@@ -483,28 +467,11 @@ def save_draft(
                         submitted_by,
                         "v1.0",
                         "Draft created from Save Draft API.",
-                        request.api_name,
-                        request.endpoint_url,
-                        protocol_type,
-                        request.input_format,
-                        request.output_format,
-                        request.capability_category,
-                        request.description,
                     ),
                 )
 
                 version_row = cursor.fetchone()
                 version_id = version_row["version_id"]
-
-                cursor.execute(
-                    """
-                    UPDATE api_submission
-                    SET current_version_id = %s,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE api_id = %s;
-                    """,
-                    (version_id, api_id),
-                )
 
                 cursor.execute(
                     """
@@ -527,8 +494,8 @@ def save_draft(
 
                 cursor.execute(
                     """
-                    INSERT INTO api_version_auth (
-                        version_id,
+                    INSERT INTO auth_metadata (
+                        api_id,
                         auth_method,
                         auth_description,
                         security_scheme_name,
@@ -537,31 +504,10 @@ def save_draft(
                     VALUES (%s, %s, %s, %s, TRUE);
                     """,
                     (
-                        version_id,
+                        api_id,
                         auth_method,
                         f"{auth_method} authentication provided during draft save.",
                         auth_method,
-                    ),
-                )
-
-                cursor.execute(
-                    """
-                    INSERT INTO api_lifecycle_event (
-                        api_id,
-                        version_id,
-                        action,
-                        from_status,
-                        to_status,
-                        actor_user_id,
-                        reason
-                    )
-                    VALUES (%s, %s, 'API_CREATED', NULL, 'DRAFT', %s, %s);
-                    """,
-                    (
-                        api_id,
-                        version_id,
-                        submitted_by,
-                        "Draft created from Save Draft API.",
                     ),
                 )
 
