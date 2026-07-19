@@ -11,6 +11,7 @@ from app.lifecycle.enums import (
     ValidationOverallStatus,
     ValidationStage,
     ValidationStageStatus,
+    VersionEventType,
 )
 
 
@@ -117,11 +118,9 @@ class PostgresLifecycleRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT version_id
-                    FROM api_version
+                    SELECT current_version_id AS version_id
+                    FROM api_submission
                     WHERE api_id = %s
-                    ORDER BY created_at DESC, version_id DESC
-                    LIMIT 1
                     """,
                     (api_id,),
                 )
@@ -141,11 +140,70 @@ class PostgresLifecycleRepository:
                 cursor.execute(
                     """
                     UPDATE api_version
-                    SET status = %s
+                    SET status = %s,
+                        published_at = CASE WHEN %s = 'PUBLISHED' THEN CURRENT_TIMESTAMP ELSE published_at END,
+                        archived_at = CASE WHEN %s = 'ARCHIVED' THEN CURRENT_TIMESTAMP ELSE archived_at END
                     WHERE version_id = %s
                     """,
-                    (status.value, version_id),
+                    (status.value, status.value, status.value, version_id),
                 )
+
+    def archive_previous_version(self, api_id: int, current_version_id: int) -> None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE api_version previous
+                    SET status = 'ARCHIVED',
+                        is_current = FALSE,
+                        archived_at = CURRENT_TIMESTAMP
+                    WHERE previous.version_id = (
+                        SELECT current.previous_version_id
+                        FROM api_version current
+                        WHERE current.api_id = %s AND current.version_id = %s
+                    )
+                      AND previous.status = 'PUBLISHED'
+                    """,
+                    (api_id, current_version_id),
+                )
+
+    def create_version_event(
+        self,
+        api_id: int,
+        version_id: int,
+        event_type: VersionEventType,
+        from_status: ApiVersionStatus | None,
+        to_status: ApiVersionStatus | None,
+        actor_user_id: int | None,
+        message: str | None = None,
+    ) -> int:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO api_version_event (
+                        version_id,
+                        api_id,
+                        actor_user_id,
+                        event_type,
+                        from_status,
+                        to_status,
+                        message
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    RETURNING event_id
+                    """,
+                    (
+                        version_id,
+                        api_id,
+                        actor_user_id,
+                        event_type.value,
+                        from_status.value if from_status is not None else None,
+                        to_status.value if to_status is not None else None,
+                        message,
+                    ),
+                )
+                return cursor.fetchone()["event_id"]
 
     def create_validation_run(
         self,

@@ -4,6 +4,7 @@ from app.lifecycle.enums import (
     LifecycleAction,
     ValidationOverallStatus,
     ValidationStageStatus,
+    VersionEventType,
 )
 from app.lifecycle.exceptions import ApiNotFoundError, CurrentVersionNotFoundError
 from app.lifecycle.repository import LifecycleRepository
@@ -30,6 +31,15 @@ class LifecycleService:
 
             self.repository.update_api_status(api_id, target_status)
             self.repository.update_version_status(version_id, ApiVersionStatus.VALIDATING)
+            self.repository.create_version_event(
+                api_id,
+                version_id,
+                VersionEventType.SUBMITTED_FOR_VALIDATION,
+                ApiVersionStatus(current_status.value),
+                ApiVersionStatus.VALIDATING,
+                actor_id,
+                "API submitted for validation.",
+            )
             updated_at = self.repository.get_api_updated_at(api_id)
 
         return LifecycleResult(
@@ -82,10 +92,25 @@ class LifecycleService:
                 message=validation_result.message,
                 error_detail=validation_result.error_detail,
             )
+            if target_status == ApiStatus.PUBLISHED:
+                self.repository.archive_previous_version(api_id, version_id)
             self.repository.update_api_status(api_id, target_status)
             self.repository.update_version_status(
                 version_id,
                 self._to_version_status(target_status),
+            )
+            self.repository.create_version_event(
+                api_id,
+                version_id,
+                (
+                    VersionEventType.VALIDATION_PASSED
+                    if validation_result.passed
+                    else VersionEventType.VALIDATION_FAILED
+                ),
+                ApiVersionStatus.VALIDATING,
+                self._to_version_status(target_status),
+                None,
+                validation_result.message or validation_result.error_detail,
             )
             updated_at = self.repository.get_api_updated_at(api_id)
 
@@ -121,6 +146,15 @@ class LifecycleService:
                 reason=reason,
             )
             self.repository.update_version_status(version_id, ApiVersionStatus.ARCHIVED)
+            self.repository.create_version_event(
+                api_id,
+                version_id,
+                VersionEventType.ARCHIVED,
+                ApiVersionStatus.PUBLISHED,
+                ApiVersionStatus.ARCHIVED,
+                actor_id,
+                reason,
+            )
             updated_at = self.repository.get_api_updated_at(api_id)
 
         return LifecycleResult(

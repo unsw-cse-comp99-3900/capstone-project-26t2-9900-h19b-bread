@@ -8,6 +8,7 @@ from app.lifecycle.enums import (
     ValidationOverallStatus,
     ValidationStage,
     ValidationStageStatus,
+    VersionEventType,
 )
 
 
@@ -43,6 +44,21 @@ class LifecycleRepository(Protocol):
         status: ApiVersionStatus,
     ) -> None:
         """Update api_version.status for statuses supported by api_version_status."""
+
+    def archive_previous_version(self, api_id: int, current_version_id: int) -> None:
+        """Archive the previous published version in the cloud version chain."""
+
+    def create_version_event(
+        self,
+        api_id: int,
+        version_id: int,
+        event_type: VersionEventType,
+        from_status: ApiVersionStatus | None,
+        to_status: ApiVersionStatus | None,
+        actor_user_id: int | None,
+        message: str | None = None,
+    ) -> int:
+        """Append an event to the cloud-managed api_version_event table."""
 
     def create_validation_run(
         self,
