@@ -86,7 +86,14 @@ def map_spec_type(protocol_type: str) -> str:
 
 
 def map_auth_method(auth_method: str) -> str:
-    auth_method_value = auth_method.strip().upper().replace(" ", "_").replace("-", "_")
+    auth_method_value = (
+        auth_method.strip()
+        .upper()
+        .replace(" ", "_")
+        .replace("-", "_")
+        .replace("OAUTH_2.0", "OAUTH2")
+        .replace("OAUTH2.0", "OAUTH2")
+    )
 
     if auth_method_value in {"OAUTH_2", "OAUTH2"}:
         return "OAUTH2"
