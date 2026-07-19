@@ -59,7 +59,8 @@ def analyze_element(element):
 
 def extract_schema_from_xml(xml_string):
     root = ET.fromstring(xml_string)
+    root_tag = root.tag.split("}")[-1].split(":")[-1]
     return {
-        "root": root.tag,
+        "root": root_tag,
         "schema": analyze_element(root),
     }
