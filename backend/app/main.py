@@ -8,7 +8,7 @@ from app.lifecycle import (
     CurrentVersionNotFoundError,
     InvalidStatusTransitionError,
 )
-from app.routers import auth, lifecycle, submissions, validation
+from app.routers import auth, lifecycle, schema_mapping, submissions, validation
 
 app = FastAPI(title="E-Invoicing API Publisher Backend")
 
@@ -21,6 +21,7 @@ app.add_middleware(
 )
 
 app.include_router(validation.router, prefix="/api/v1")
+app.include_router(schema_mapping.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(submissions.router, prefix="/api/v1")
 app.include_router(lifecycle.router, prefix="/api")
