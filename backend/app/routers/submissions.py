@@ -585,7 +585,7 @@ def save_draft(
             submission_status="DRAFT",
             version_status="DRAFT",
             source_type="FILE_UPLOAD",
-            file_path="inline/draft.txt",
+            file_path="inline/draft_{api_id}.txt",
             spec_url=None,
             validation_result=None,
         )
