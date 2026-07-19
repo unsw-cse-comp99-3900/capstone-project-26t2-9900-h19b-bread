@@ -158,11 +158,15 @@ class PostgresLifecycleRepository:
                         is_current = FALSE,
                         archived_at = CURRENT_TIMESTAMP
                     WHERE previous.version_id = (
-                        SELECT current.previous_version_id
-                        FROM api_version current
-                        WHERE current.api_id = %s AND current.version_id = %s
+                        SELECT candidate.version_id
+                        FROM api_version candidate
+                        WHERE candidate.api_id = %s
+                          AND candidate.version_id <> %s
+                          AND candidate.status = 'PUBLISHED'
+                        ORDER BY candidate.published_at DESC NULLS LAST,
+                                 candidate.version_id DESC
+                        LIMIT 1
                     )
-                      AND previous.status = 'PUBLISHED'
                     """,
                     (api_id, current_version_id),
                 )
