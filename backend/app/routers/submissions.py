@@ -13,6 +13,7 @@ from app.schemas.submission_schema import (
     SubmissionRequest,
     SubmissionResponse,
     SubmissionUrlImportRequest,
+    UserListItem,
 )
 from app.schemas.validation_schema import ValidationRequest
 from app.services.validation_service import validate_specification
@@ -94,14 +95,14 @@ def map_auth_method(auth_method: str) -> str:
 
 def map_submission_status(overall_status: str) -> str:
     if overall_status == "pass":
-        return "DRAFT"
+        return "PUBLISHED"
 
     return "REJECTED"
 
 
 def map_version_status(overall_status: str) -> str:
     if overall_status == "pass":
-        return "DRAFT"
+        return "PUBLISHED"
 
     return "REJECTED"
 
@@ -157,7 +158,7 @@ def create_submission(
     overall_status_value = to_plain_value(validation_result.overall_status)
 
     response_submission_status = (
-        "validated"
+        "published"
         if overall_status_value == "pass"
         else "rejected"
     )
@@ -352,6 +353,8 @@ def list_submissions(
     current_user: dict = Depends(require_role("PUBLISHER", "ADMIN")),
 ) -> list[SubmissionListItem]:
     enterprise_id = current_user["enterprise_id"]
+    current_user_id = current_user["user_id"]
+    current_user_role = current_user["role"].upper()
 
     try:
         with get_connection() as connection:
@@ -359,19 +362,23 @@ def list_submissions(
                 cursor.execute(
                     """
                     SELECT
-                        api_id,
-                        api_name,
-                        endpoint_url,
-                        protocol_type,
-                        input_format,
-                        output_format,
-                        capability_category,
-                        status,
-                        created_at,
-                        updated_at
-                    FROM api_submission
-                    WHERE enterprise_id = %s
-                    ORDER BY api_id DESC;
+                        s.api_id,
+                        s.api_name,
+                        s.endpoint_url,
+                        s.protocol_type,
+                        s.input_format,
+                        s.output_format,
+                        s.capability_category,
+                        s.status,
+                        s.created_at,
+                        s.updated_at,
+                        s.submitted_by,
+                        u.name AS submitted_by_name
+                    FROM api_submission s
+                    LEFT JOIN app_user u
+                        ON s.submitted_by = u.user_id
+                    WHERE s.enterprise_id = %s
+                    ORDER BY s.api_id DESC;
                     """,
                     (enterprise_id,),
                 )
@@ -390,6 +397,13 @@ def list_submissions(
                 status=row["status"],
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
+                submitted_by=row["submitted_by"],
+                submitted_by_name=row["submitted_by_name"],
+                is_current_user_api=row["submitted_by"] == current_user_id,
+                can_manage=(
+                    row["submitted_by"] == current_user_id
+                    or current_user_role in {"MANAGER", "ADMIN"}
+                ),
             )
             for row in rows
         ]
@@ -398,6 +412,42 @@ def list_submissions(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to list submissions: {exc}",
+        )
+@router.get("/authors", response_model=List[UserListItem])
+def list_submission_authors(
+    current_user: dict = Depends(require_role("PUBLISHER", "MANAGER", "ADMIN")),
+) -> list[UserListItem]:
+    enterprise_id = current_user["enterprise_id"]
+
+    try:
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        user_id,
+                        name
+                    FROM app_user
+                    WHERE enterprise_id = %s
+                    ORDER BY name ASC;
+                    """,
+                    (enterprise_id,),
+                )
+
+                rows = cursor.fetchall()
+
+        return [
+            UserListItem(
+                user_id=row["user_id"],
+                name=row["name"],
+            )
+            for row in rows
+        ]
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to list submission authors: {exc}",
         )
 @router.post("/draft", response_model=DraftSubmissionResponse)
 def save_draft(
