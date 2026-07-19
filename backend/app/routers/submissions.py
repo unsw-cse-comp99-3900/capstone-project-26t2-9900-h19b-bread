@@ -445,7 +445,7 @@ def create_submission(
             submission_status=db_submission_status,
             version_status=db_version_status,
             source_type="FILE_UPLOAD",
-            file_path="inline/submission.txt",
+            file_path="inline/submission_{api_id}.txt",
             spec_url=None,
             validation_result=validation_result,
         )
