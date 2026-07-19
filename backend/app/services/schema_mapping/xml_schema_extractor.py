@@ -42,8 +42,8 @@ def analyze_element(element):
 
     grouped_children = {}
     for child in children:
-        grouped_children.setdefault(child.tag, []).append(analyze_element(child))
-
+        tag = child.tag.split("}")[-1].split(":")[-1]
+        grouped_children.setdefault(tag, []).append(analyze_element(child))
     for tag, child_schemas in grouped_children.items():
         schema["required"].append(tag)
         if len(child_schemas) > 1:
