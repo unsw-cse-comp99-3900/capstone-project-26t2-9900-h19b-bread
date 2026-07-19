@@ -293,14 +293,13 @@ def _setter(path: str, value_expr: str) -> str:
     if len(parts) == 1:
         return f"    target[{parts[0]!r}] = {value_expr}"
 
-    lines = []
-    for i in range(len(parts) - 1):
-        chain = "target" + "".join(f"[{p!r}]" for p in parts[:i+1])
-        lines.append(f"    {chain} = {chain} if isinstance({chain}, dict) else {{}}")
-        lines.append(f"    {chain}.setdefault({parts[i+1]!r}, {{}})")
+    lines = ["    node = target"]
+    for part in parts[:-1]:
+        lines.append(f"    if not isinstance(node.get({part!r}), dict):")
+        lines.append(f"        node[{part!r}] = {{}}")
+        lines.append(f"    node = node[{part!r}]")
 
-    assignment = "target" + "".join(f"[{p!r}]" for p in parts)
-    lines.append(f"    {assignment} = {value_expr}")
+    lines.append(f"    node[{parts[-1]!r}] = {value_expr}")
     return "\n".join(lines)
 
 def _safe_name(name: str) -> str:
