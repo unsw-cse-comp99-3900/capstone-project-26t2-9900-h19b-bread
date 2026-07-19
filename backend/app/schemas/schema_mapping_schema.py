@@ -36,3 +36,38 @@ class InferJsonSchemaRequest(BaseModel):
 
 class InferXmlSchemaRequest(BaseModel):
     xml_content: str = Field(..., min_length=1)
+
+
+class SchemaMappingErrorResponse(BaseModel):
+    detail: str
+
+
+class SchemaInferenceResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_definition: dict[str, Any] = Field(..., alias="schema")
+
+
+class SchemaCompareResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    source: str
+    target: str
+    compatibility: str
+    summary: dict[str, Any]
+    issues: list[dict[str, Any]]
+    normalized_source: dict[str, Any]
+    normalized_target: dict[str, Any]
+
+
+class MatrixResponse(BaseModel):
+    matrix: list[list[dict[str, Any]]]
+
+
+class TransformPreviewResponse(BaseModel):
+    result: Any
+    format: Literal["json", "xml"]
+    mapping_status: str
+    mapping: dict[str, Any]
+    comparison: dict[str, Any]
+    transform_code: str

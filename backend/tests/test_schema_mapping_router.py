@@ -75,10 +75,47 @@ def test_infer_json_schema_endpoint():
     assert body["schema"]["properties"]["items"]["type"] == "array"
 
 
+def test_matrix_endpoint_accepts_schema_alias_payload():
+    schema = _object_schema({"id": _field("integer")})
+
+    response = client.post(
+        "/api/v1/schema-mapping/matrix",
+        json={
+            "schemas": [
+                {"name": "A", "schema": schema},
+                {"name": "B", "schema": schema},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["matrix"][0][0]["compatibility"] == "same_schema"
+    assert body["matrix"][0][1]["compatibility"] == "directly_compatible"
+
+
+def test_transform_preview_endpoint_maps_domain_errors_to_400():
+    source = _object_schema({"amount": _field("integer")})
+    target = _object_schema({"amount": _field("integer")})
+
+    response = client.post(
+        "/api/v1/schema-mapping/transform-preview",
+        json={
+            "source_schema": source,
+            "target_schema": target,
+            "data": {"amount": "not-an-integer"},
+        },
+    )
+
+    assert response.status_code == 400
+    assert "Validation failed" in response.json()["detail"]
+
+
 def test_infer_xml_schema_endpoint_rejects_invalid_xml():
     response = client.post(
         "/api/v1/schema-mapping/infer-xml-schema",
         json={"xml_content": "<invoice>"},
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 400
+    assert "Could not parse XML content" in response.json()["detail"]
