@@ -5,6 +5,7 @@ from pydantic import BaseModel, HttpUrl
 
 from app.schemas.validation_schema import ValidationResponse
 
+
 class SubmissionRequest(BaseModel):
     api_name: str
     endpoint_url: str
@@ -15,7 +16,8 @@ class SubmissionRequest(BaseModel):
     description: Optional[str] = None
     capability_category: str
     spec_content: str
-    
+
+
 class SubmissionUrlImportRequest(BaseModel):
     api_name: str
     endpoint_url: str
@@ -27,14 +29,17 @@ class SubmissionUrlImportRequest(BaseModel):
     capability_category: str
     spec_url: HttpUrl
 
+
 class SubmissionResponse(BaseModel):
     submission_id: str
     status: str
     validation: ValidationResponse
 
+
 class DraftSubmissionResponse(BaseModel):
     submission_id: str
     status: str
+
 
 class SubmissionListItem(BaseModel):
     api_id: int
@@ -47,3 +52,13 @@ class SubmissionListItem(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+
+    submitted_by: int
+    submitted_by_name: Optional[str] = None
+    is_current_user_api: bool
+    can_manage: bool
+
+
+class UserListItem(BaseModel):
+    user_id: int
+    name: str
