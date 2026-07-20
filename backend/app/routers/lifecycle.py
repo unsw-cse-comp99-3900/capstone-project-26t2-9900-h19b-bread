@@ -26,8 +26,12 @@ except ModuleNotFoundError as exc:
 
     def get_lifecycle_actor() -> dict | None:
         return None
+
+    def get_validation_callback_actor() -> dict | None:
+        return None
 else:
     get_lifecycle_actor = require_role("PUBLISHER", "ADMIN")
+    get_validation_callback_actor = require_role("ADMIN")
 
 
 def get_lifecycle_service() -> LifecycleService:
@@ -46,6 +50,7 @@ class SubmitRequest(BaseModel):
 
 
 class ValidationResultRequest(BaseModel):
+    validation_run_id: int
     passed: bool | None = None
     overall_status: str | None = None
     stage: str = ValidationStage.SPECIFICATION_VALIDATION.value
@@ -129,6 +134,10 @@ def _resolve_actor_id(body_actor_id: int, current_user: dict | None) -> int:
     return body_actor_id
 
 
+def _is_admin(current_user: dict | None) -> bool:
+    return current_user is not None and str(current_user.get("role", "")).upper() == "ADMIN"
+
+
 @router.post("/{api_id}/submit", response_model=LifecycleResponse)
 def submit_api_endpoint(
     api_id: int,
@@ -144,9 +153,14 @@ def submit_api_endpoint(
             actor_id=actor_id,
             protocol=body.protocol,
             spec_content=body.spec_content,
+            is_admin=_is_admin(current_user),
         )
     else:
-        result = coordinator.submit_only(api_id=api_id, actor_id=actor_id)
+        result = coordinator.submit_only(
+            api_id=api_id,
+            actor_id=actor_id,
+            is_admin=_is_admin(current_user),
+        )
     return _to_response(result)
 
 
@@ -155,6 +169,7 @@ def validation_result_endpoint(
     api_id: int,
     request: ValidationResultRequest,
     service: LifecycleService = Depends(get_lifecycle_service),
+    _current_user: dict | None = Depends(get_validation_callback_actor),
 ) -> LifecycleResponse:
     message = json.dumps(request.result_json) if request.result_json is not None else None
     validation_result = ValidationResultInput(
@@ -166,6 +181,7 @@ def validation_result_endpoint(
     result = service.handle_validation_result(
         api_id=api_id,
         validation_result=validation_result,
+        validation_run_id=request.validation_run_id,
     )
     return _to_response(result)
 
@@ -182,6 +198,7 @@ def withdraw_api_endpoint(
         api_id=api_id,
         actor_id=_resolve_actor_id(body.actor_id, current_user),
         reason=body.reason,
+        is_admin=_is_admin(current_user),
     )
     return _to_response(result)
 
