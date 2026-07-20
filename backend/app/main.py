@@ -6,6 +6,7 @@ from psycopg.errors import IntegrityError
 from app.lifecycle import (
     ApiNotFoundError,
     ApiPermissionError,
+    CurrentValidationRunNotFoundError,
     CurrentVersionNotFoundError,
     InvalidStatusTransitionError,
 )
@@ -55,6 +56,17 @@ async def handle_api_permission_error(
     return JSONResponse(
         status_code=403,
         content={"error": "ApiPermissionDenied", "message": str(exc)},
+    )
+
+
+@app.exception_handler(CurrentValidationRunNotFoundError)
+async def handle_validation_run_not_found(
+    request: Request,
+    exc: CurrentValidationRunNotFoundError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content={"error": "CurrentValidationRunNotFound", "message": str(exc)},
     )
 
 

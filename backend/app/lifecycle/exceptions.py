@@ -22,6 +22,11 @@ class ApiPermissionError(LifecycleError):
         super().__init__("Only the API creator or an administrator may change lifecycle state")
 
 
+class CurrentValidationRunNotFoundError(LifecycleError):
+    def __init__(self, api_id: int) -> None:
+        super().__init__(f"No active validation run was found for API submission: {api_id}")
+
+
 class InvalidStatusTransitionError(LifecycleError):
     def __init__(self, from_status: ApiStatus, to_status: ApiStatus) -> None:
         self.from_status = from_status

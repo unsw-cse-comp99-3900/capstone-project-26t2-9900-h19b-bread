@@ -3,12 +3,14 @@ from app.lifecycle.enums import (
     ApiVersionStatus,
     LifecycleAction,
     ValidationOverallStatus,
+    ValidationStage,
     ValidationStageStatus,
     VersionEventType,
 )
 from app.lifecycle.exceptions import (
     ApiNotFoundError,
     ApiPermissionError,
+    CurrentValidationRunNotFoundError,
     CurrentVersionNotFoundError,
 )
 from app.lifecycle.repository import LifecycleRepository
@@ -17,6 +19,8 @@ from app.lifecycle.state_machine import ensure_transition_allowed
 
 
 class LifecycleService:
+    REQUIRED_VALIDATION_STAGES = frozenset(ValidationStage)
+
     def __init__(self, repository: LifecycleRepository) -> None:
         self.repository = repository
 
@@ -41,6 +45,11 @@ class LifecycleService:
 
             self.repository.update_api_status(api_id, target_status)
             self.repository.update_version_status(version_id, ApiVersionStatus.VALIDATING)
+            validation_run_id = self.repository.create_validation_run(
+                api_id=api_id,
+                version_id=version_id,
+                overall_status=ValidationOverallStatus.RUNNING,
+            )
             self.repository.create_version_event(
                 api_id,
                 version_id,
@@ -58,6 +67,7 @@ class LifecycleService:
             action=action,
             message="API submitted for validation.",
             version_id=version_id,
+            validation_run_id=validation_run_id,
             updated_at=updated_at,
         )
 
@@ -65,42 +75,62 @@ class LifecycleService:
         self,
         api_id: int,
         validation_result: ValidationResultInput,
+        validation_run_id: int | None = None,
     ) -> LifecycleResult:
         with self.repository.transaction():
             current_status = self._get_required_status(api_id)
-            target_status = (
-                ApiStatus.PUBLISHED if validation_result.passed else ApiStatus.REJECTED
-            )
-            ensure_transition_allowed(current_status, target_status)
-
             version_id = self._get_required_version_id(api_id)
-            action = (
-                LifecycleAction.VALIDATION_PASSED
-                if validation_result.passed
-                else LifecycleAction.VALIDATION_FAILED
+            active_run_id = self.repository.get_active_validation_run_id(
+                api_id,
+                version_id,
+                validation_run_id,
             )
-            overall_status = (
-                ValidationOverallStatus.PASSED
-                if validation_result.passed
-                else ValidationOverallStatus.FAILED
-            )
+            if active_run_id is None:
+                raise CurrentValidationRunNotFoundError(api_id)
+
             stage_status = (
                 ValidationStageStatus.PASSED
                 if validation_result.passed
                 else ValidationStageStatus.FAILED
             )
-
-            validation_run_id = self.repository.create_validation_run(
-                api_id=api_id,
-                version_id=version_id,
-                overall_status=overall_status,
-            )
             self.repository.save_validation_result(
-                validation_run_id=validation_run_id,
+                validation_run_id=active_run_id,
                 stage=validation_result.stage,
                 status=stage_status,
                 message=validation_result.message,
                 error_detail=validation_result.error_detail,
+            )
+            stage_statuses = self.repository.get_validation_stage_statuses(active_run_id)
+
+            if not validation_result.passed:
+                target_status = ApiStatus.REJECTED
+                overall_status = ValidationOverallStatus.FAILED
+                action = LifecycleAction.VALIDATION_FAILED
+            elif self._all_required_stages_passed(stage_statuses):
+                target_status = ApiStatus.PUBLISHED
+                overall_status = ValidationOverallStatus.PASSED
+                action = LifecycleAction.VALIDATION_PASSED
+            else:
+                self.repository.update_validation_run_status(
+                    active_run_id,
+                    ValidationOverallStatus.PARTIAL,
+                    completed=False,
+                )
+                updated_at = self.repository.get_api_updated_at(api_id)
+                return LifecycleResult(
+                    api_id=api_id,
+                    status=ApiStatus.VALIDATING,
+                    message="Validation stage recorded; awaiting remaining required stages.",
+                    version_id=version_id,
+                    validation_run_id=active_run_id,
+                    updated_at=updated_at,
+                )
+
+            ensure_transition_allowed(current_status, target_status)
+            self.repository.update_validation_run_status(
+                active_run_id,
+                overall_status,
+                completed=True,
             )
             if target_status == ApiStatus.PUBLISHED:
                 self.repository.archive_previous_version(api_id, version_id)
@@ -134,7 +164,7 @@ class LifecycleService:
                 else "Validation failed. API rejected."
             ),
             version_id=version_id,
-            validation_run_id=validation_run_id,
+            validation_run_id=active_run_id,
             updated_at=updated_at,
         )
 
@@ -217,3 +247,12 @@ class LifecycleService:
         if status == ApiStatus.WITHDRAWN:
             return ApiVersionStatus.ARCHIVED
         return ApiVersionStatus(status.value)
+
+    def _all_required_stages_passed(
+        self,
+        statuses: dict[ValidationStage, ValidationStageStatus],
+    ) -> bool:
+        return all(
+            statuses.get(stage) == ValidationStageStatus.PASSED
+            for stage in self.REQUIRED_VALIDATION_STAGES
+        )

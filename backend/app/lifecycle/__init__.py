@@ -11,6 +11,7 @@ from app.lifecycle.exceptions import (
     ApiNotFoundError,
     ApiPermissionError,
     CurrentVersionNotFoundError,
+    CurrentValidationRunNotFoundError,
     InvalidStatusTransitionError,
 )
 from app.lifecycle.postgres_repository import PostgresLifecycleRepository
@@ -29,6 +30,7 @@ __all__ = [
     "ApiStatus",
     "ApiVersionStatus",
     "CurrentVersionNotFoundError",
+    "CurrentValidationRunNotFoundError",
     "InvalidStatusTransitionError",
     "LifecycleAction",
     "VersionEventType",

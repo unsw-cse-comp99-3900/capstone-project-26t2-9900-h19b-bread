@@ -3,7 +3,13 @@ from datetime import datetime
 
 import pytest
 
-from app.lifecycle.enums import ApiStatus, ValidationStage, VersionEventType
+from app.lifecycle.enums import (
+    ApiStatus,
+    ValidationOverallStatus,
+    ValidationStage,
+    ValidationStageStatus,
+    VersionEventType,
+)
 from app.lifecycle.exceptions import ApiPermissionError
 from app.lifecycle.schemas import ValidationResultInput
 from app.lifecycle.service import LifecycleService
@@ -16,6 +22,9 @@ class FakeLifecycleRepository:
         self.version_status = None
         self.events: list[dict] = []
         self.archived_previous = False
+        self.validation_run_id = 90
+        self.validation_overall_status = ValidationOverallStatus.RUNNING
+        self.validation_stage_statuses = {}
 
     @contextmanager
     def transaction(self):
@@ -66,28 +75,52 @@ class FakeLifecycleRepository:
         return len(self.events)
 
     def create_validation_run(self, api_id, version_id, overall_status):
-        return 90
+        self.validation_overall_status = overall_status
+        return self.validation_run_id
 
-    def save_validation_result(self, **kwargs):
-        return None
+    def get_active_validation_run_id(
+        self,
+        api_id,
+        version_id,
+        validation_run_id=None,
+    ):
+        if validation_run_id not in {None, self.validation_run_id}:
+            return None
+        if self.validation_overall_status not in {
+            ValidationOverallStatus.RUNNING,
+            ValidationOverallStatus.PARTIAL,
+        }:
+            return None
+        return self.validation_run_id
+
+    def save_validation_result(self, validation_run_id, stage, status, **kwargs):
+        self.validation_stage_statuses[stage] = status
+
+    def get_validation_stage_statuses(self, validation_run_id):
+        return dict(self.validation_stage_statuses)
+
+    def update_validation_run_status(self, validation_run_id, status, completed):
+        self.validation_overall_status = status
 
 
 def test_submit_records_version_event_with_actor() -> None:
     repository = FakeLifecycleRepository(ApiStatus.DRAFT)
 
-    LifecycleService(repository).submit_api(api_id=5, actor_id=42)
+    result = LifecycleService(repository).submit_api(api_id=5, actor_id=42)
 
     event = repository.events[0]
     assert event["event_type"] == VersionEventType.SUBMITTED_FOR_VALIDATION
     assert event["actor_user_id"] == 42
     assert event["from_status"].value == "DRAFT"
     assert event["to_status"].value == "VALIDATING"
+    assert result.validation_run_id == 90
+    assert repository.validation_overall_status == ValidationOverallStatus.RUNNING
 
 
-def test_successful_validation_archives_prior_published_version() -> None:
+def test_single_successful_stage_remains_validating() -> None:
     repository = FakeLifecycleRepository(ApiStatus.VALIDATING)
 
-    LifecycleService(repository).handle_validation_result(
+    result = LifecycleService(repository).handle_validation_result(
         api_id=5,
         validation_result=ValidationResultInput(
             passed=True,
@@ -96,9 +129,44 @@ def test_successful_validation_archives_prior_published_version() -> None:
         ),
     )
 
+    assert result.status == ApiStatus.VALIDATING
+    assert repository.validation_overall_status == ValidationOverallStatus.PARTIAL
+    assert repository.archived_previous is False
+    assert repository.events == []
+
+
+def test_all_required_stages_publish_and_archive_previous_version() -> None:
+    repository = FakeLifecycleRepository(ApiStatus.VALIDATING)
+    service = LifecycleService(repository)
+
+    for stage in ValidationStage:
+        result = service.handle_validation_result(
+            api_id=5,
+            validation_run_id=90,
+            validation_result=ValidationResultInput(passed=True, stage=stage),
+        )
+
+    assert result.status == ApiStatus.PUBLISHED
+    assert repository.validation_overall_status == ValidationOverallStatus.PASSED
     assert repository.archived_previous is True
     assert repository.events[0]["event_type"] == VersionEventType.VALIDATION_PASSED
-    assert repository.events[0]["to_status"].value == "PUBLISHED"
+
+
+def test_any_failed_stage_rejects_immediately() -> None:
+    repository = FakeLifecycleRepository(ApiStatus.VALIDATING)
+
+    result = LifecycleService(repository).handle_validation_result(
+        api_id=5,
+        validation_run_id=90,
+        validation_result=ValidationResultInput(
+            passed=False,
+            stage=ValidationStage.SECURITY_VALIDATION,
+        ),
+    )
+
+    assert result.status == ApiStatus.REJECTED
+    assert repository.validation_overall_status == ValidationOverallStatus.FAILED
+    assert repository.events[0]["event_type"] == VersionEventType.VALIDATION_FAILED
 
 
 def test_withdraw_records_archive_event_with_actor() -> None:

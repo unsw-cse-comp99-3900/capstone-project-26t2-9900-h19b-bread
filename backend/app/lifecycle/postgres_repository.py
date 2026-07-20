@@ -232,10 +232,9 @@ class PostgresLifecycleRepository:
                     INSERT INTO validation_run (
                         api_id,
                         version_id,
-                        overall_status,
-                        completed_at
+                        overall_status
                     )
-                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                    VALUES (%s, %s, %s)
                     RETURNING validation_run_id
                     """,
                     (api_id, version_id, overall_status.value),
@@ -243,6 +242,31 @@ class PostgresLifecycleRepository:
                 row = cursor.fetchone()
 
         return row["validation_run_id"]
+
+    def get_active_validation_run_id(
+        self,
+        api_id: int,
+        version_id: int,
+        validation_run_id: int | None = None,
+    ) -> int | None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT validation_run_id
+                    FROM validation_run
+                    WHERE api_id = %s
+                      AND version_id = %s
+                      AND overall_status IN ('RUNNING', 'PARTIAL')
+                      AND (%s IS NULL OR validation_run_id = %s)
+                    ORDER BY started_at DESC, validation_run_id DESC
+                    LIMIT 1
+                    FOR UPDATE
+                    """,
+                    (api_id, version_id, validation_run_id, validation_run_id),
+                )
+                row = cursor.fetchone()
+        return None if row is None else row["validation_run_id"]
 
     def save_validation_result(
         self,
@@ -264,6 +288,12 @@ class PostgresLifecycleRepository:
                         error_detail
                     )
                     VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (validation_run_id, stage)
+                    DO UPDATE SET
+                        status = EXCLUDED.status,
+                        message = EXCLUDED.message,
+                        error_detail = EXCLUDED.error_detail,
+                        created_at = CURRENT_TIMESTAMP
                     """,
                     (
                         validation_run_id,
@@ -272,4 +302,45 @@ class PostgresLifecycleRepository:
                         message,
                         error_detail,
                     ),
+                )
+
+    def get_validation_stage_statuses(
+        self,
+        validation_run_id: int,
+    ) -> dict[ValidationStage, ValidationStageStatus]:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT stage, status
+                    FROM validation_result
+                    WHERE validation_run_id = %s
+                    """,
+                    (validation_run_id,),
+                )
+                rows = cursor.fetchall()
+        return {
+            ValidationStage(str(row["stage"])): ValidationStageStatus(str(row["status"]))
+            for row in rows
+        }
+
+    def update_validation_run_status(
+        self,
+        validation_run_id: int,
+        status: ValidationOverallStatus,
+        completed: bool,
+    ) -> None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE validation_run
+                    SET overall_status = %s,
+                        completed_at = CASE
+                            WHEN %s THEN CURRENT_TIMESTAMP
+                            ELSE NULL
+                        END
+                    WHERE validation_run_id = %s
+                    """,
+                    (status.value, completed, validation_run_id),
                 )

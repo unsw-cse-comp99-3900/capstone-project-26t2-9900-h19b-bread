@@ -71,6 +71,14 @@ class LifecycleRepository(Protocol):
     ) -> int:
         """Insert validation_run and return validation_run.validation_run_id."""
 
+    def get_active_validation_run_id(
+        self,
+        api_id: int,
+        version_id: int,
+        validation_run_id: int | None = None,
+    ) -> int | None:
+        """Lock and return the active RUNNING/PARTIAL validation run."""
+
     def save_validation_result(
         self,
         validation_run_id: int,
@@ -79,4 +87,18 @@ class LifecycleRepository(Protocol):
         message: str | None,
         error_detail: str | None,
     ) -> None:
-        """Insert validation_result for a validation run stage."""
+        """Insert or replace one stage result for a validation run."""
+
+    def get_validation_stage_statuses(
+        self,
+        validation_run_id: int,
+    ) -> dict[ValidationStage, ValidationStageStatus]:
+        """Return all recorded stage statuses for the run."""
+
+    def update_validation_run_status(
+        self,
+        validation_run_id: int,
+        status: ValidationOverallStatus,
+        completed: bool,
+    ) -> None:
+        """Update aggregate validation status and completion timestamp."""
