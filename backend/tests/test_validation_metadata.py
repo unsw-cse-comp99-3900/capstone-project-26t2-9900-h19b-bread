@@ -167,6 +167,154 @@ def test_capability_inconsistent_warns_but_passes():
 
 
 # --------------------------------------------------------------------------- #
+# SOAP metadata consistency: endpoint_url <-> soap:address, format <-> XML
+# --------------------------------------------------------------------------- #
+def _soap_invoice_wsdl(location: str = "http://svc.example.com/invoice") -> str:
+    return (
+        '<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" '
+        'xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+        'xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" '
+        'targetNamespace="http://svc.example.com/invoice">'
+        '<types><xsd:schema targetNamespace="http://svc.example.com/invoice">'
+        '<xsd:element name="invoiceNumber" type="xsd:string"/>'
+        '<xsd:element name="supplier" type="xsd:string"/>'
+        '<xsd:element name="buyer" type="xsd:string"/>'
+        '<xsd:element name="taxTotal" type="xsd:decimal"/>'
+        "</xsd:schema></types>"
+        '<portType name="InvoicePort"><operation name="SubmitInvoice"/></portType>'
+        '<service name="InvoiceService"><port name="InvoicePortPort">'
+        f'<soap:address location="{location}"/>'
+        "</port></service></definitions>"
+    )
+
+
+def _soap_wsdl_no_address() -> str:
+    return (
+        '<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" '
+        'xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+        'targetNamespace="http://svc.example.com/invoice">'
+        '<types><xsd:schema>'
+        '<xsd:element name="invoiceNumber" type="xsd:string"/>'
+        "</xsd:schema></types>"
+        '<portType name="P"><operation name="SubmitInvoice"/></portType>'
+        "</definitions>"
+    )
+
+
+def test_soap_endpoint_matches_address_no_warning():
+    request = _req(
+        _soap_invoice_wsdl(),
+        protocol=Protocol.SOAP,
+        endpoint_url="http://svc.example.com/invoice",
+    )
+    status, errors, _ = _run_specification_stage(request)
+    assert status == ValidationStatus.PASS
+    assert "METADATA_ENDPOINT_MISMATCH" not in _spec_codes(errors)
+
+
+def test_soap_endpoint_mismatch_warns_but_passes():
+    request = _req(
+        _soap_invoice_wsdl(),
+        protocol=Protocol.SOAP,
+        endpoint_url="http://evil.example.org/x",
+    )
+    status, errors, _ = _run_specification_stage(request)
+    assert status == ValidationStatus.PASS
+    assert "METADATA_ENDPOINT_MISMATCH" in _spec_codes(errors)
+
+
+def test_soap_endpoint_unverifiable_when_no_address():
+    request = _req(
+        _soap_wsdl_no_address(),
+        protocol=Protocol.SOAP,
+        endpoint_url="http://svc.example.com/invoice",
+    )
+    status, errors, _ = _run_specification_stage(request)
+    assert status == ValidationStatus.PASS
+    assert "METADATA_ENDPOINT_UNVERIFIABLE" in _spec_codes(errors)
+
+
+def test_soap_json_format_mismatch_warns():
+    """SOAP payloads are XML, so declaring JSON is inconsistent -> warning."""
+    request = _req(
+        _soap_invoice_wsdl(),
+        protocol=Protocol.SOAP,
+        input_format="JSON",
+        output_format="JSON",
+    )
+    status, errors, _ = _run_specification_stage(request)
+    assert status == ValidationStatus.PASS
+    assert "METADATA_INPUT_FORMAT_MISMATCH" in _spec_codes(errors)
+
+
+def test_soap_xml_ubl_format_no_warning():
+    request = _req(
+        _soap_invoice_wsdl(),
+        protocol=Protocol.SOAP,
+        input_format="XML",
+        output_format="UBL",
+    )
+    status, errors, _ = _run_specification_stage(request)
+    assert "METADATA_INPUT_FORMAT_MISMATCH" not in _spec_codes(errors)
+    assert "METADATA_OUTPUT_FORMAT_MISMATCH" not in _spec_codes(errors)
+
+
+# --------------------------------------------------------------------------- #
+# SOAP structural completeness (FR-4): portType / operation required
+# --------------------------------------------------------------------------- #
+def test_soap_missing_porttype_fails():
+    wsdl = (
+        '<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" '
+        'targetNamespace="http://svc.example.com/invoice"><types/></definitions>'
+    )
+    request = _req(wsdl, protocol=Protocol.SOAP)
+    status, errors, _ = _run_specification_stage(request)
+    assert status == ValidationStatus.FAIL
+    assert "WSDL_NO_PORTTYPE" in _spec_codes(errors)
+
+
+def test_soap_complete_wsdl_passes_structure():
+    request = _req(_soap_invoice_wsdl(), protocol=Protocol.SOAP)
+    status, errors, _ = _run_specification_stage(request)
+    assert status == ValidationStatus.PASS
+    assert "WSDL_NO_PORTTYPE" not in _spec_codes(errors)
+    assert "WSDL_NO_OPERATION" not in _spec_codes(errors)
+
+
+def _soap_full_invoice_wsdl() -> str:
+    """A complete + secure e-invoicing WSDL that should pass every stage."""
+    return (
+        '<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" '
+        'xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+        'xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" '
+        'targetNamespace="http://svc.example.com/invoice">'
+        '<types><xsd:schema targetNamespace="http://svc.example.com/invoice">'
+        '<xsd:element name="invoiceNumber" type="xsd:string"/>'
+        '<xsd:element name="issueDate" type="xsd:date"/>'
+        '<xsd:element name="supplier" type="xsd:string"/>'
+        '<xsd:element name="buyer" type="xsd:string"/>'
+        '<xsd:element name="taxTotal" type="xsd:decimal"/>'
+        '<xsd:element name="totalAmount" type="xsd:decimal"/>'
+        "</xsd:schema></types>"
+        '<portType name="InvoicePort"><operation name="SubmitInvoice"/></portType>'
+        '<service name="InvoiceService"><port name="P">'
+        '<soap:address location="https://svc.example.com/invoice"/>'
+        "</port></service></definitions>"
+    )
+
+
+def test_pipeline_soap_invoice_all_stages_pass():
+    """End-to-end SOAP: FR-4 (structure) + FR-5 (domain) + FR-6 (security) all pass."""
+    request = _req(_soap_full_invoice_wsdl(), protocol=Protocol.SOAP, auth_method="mTLS")
+    resp = validate_specification(request)
+    stage_status = {s.stage: s.status for s in resp.stages}
+    assert stage_status[ValidationStage.SPECIFICATION_VALIDATION] == ValidationStatus.PASS
+    assert stage_status[ValidationStage.DOMAIN_COMPLIANCE_VALIDATION] == ValidationStatus.PASS
+    assert stage_status[ValidationStage.SECURITY_VALIDATION] == ValidationStatus.PASS
+    assert resp.overall_status == ValidationStatus.PASS
+
+
+# --------------------------------------------------------------------------- #
 # Full pipeline: metadata errors surface end-to-end
 # --------------------------------------------------------------------------- #
 def test_pipeline_protocol_mismatch_marks_later_stages_not_run():

@@ -14,6 +14,7 @@ from app.schemas.validation_schema import (
     ValidationStage,
     ValidationStatus,
 )
+from app.services.api_parser_service import parse_wsdl
 from app.services.validation_service import (
     _run_domain_stage,
     validate_specification,
@@ -161,12 +162,81 @@ def test_parsed_spec_unavailable_fails():
 
 
 # --------------------------------------------------------------------------- #
-# Domain stage: SOAP is skipped in Sprint 2
+# Domain stage: SOAP / WSDL
 # --------------------------------------------------------------------------- #
-def test_soap_is_skipped_and_passes():
-    status, errors = _domain(object(), protocol=Protocol.SOAP)
+def _wsdl(target_ns: str, fields: dict, operation: str = "Process") -> str:
+    """Build a minimal WSDL whose <types> embeds an XSD with the given fields."""
+    elements = "".join(
+        f'<xsd:element name="{name}" type="xsd:{xsd_type}"/>'
+        for name, xsd_type in fields.items()
+    )
+    return (
+        '<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" '
+        'xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+        f'targetNamespace="{target_ns}">'
+        f'<types><xsd:schema targetNamespace="{target_ns}">{elements}'
+        "</xsd:schema></types>"
+        f'<portType name="MainPort"><operation name="{operation}"/></portType>'
+        "</definitions>"
+    )
+
+
+def _soap_domain(wsdl: str):
+    """Parse a WSDL string and run only the domain stage against its root."""
+    root, _ = parse_wsdl(wsdl)
+    request = ValidationRequest(
+        protocol=Protocol.SOAP,
+        spec_content=wsdl,
+        auth_method="OAuth2",
+    )
+    return _run_domain_stage(request, root)
+
+
+def test_soap_real_invoice_passes():
+    wsdl = _wsdl(
+        "http://example.com/invoice",
+        {
+            "invoiceNumber": "string",
+            "issueDate": "date",
+            "supplier": "string",
+            "buyer": "string",
+            "taxTotal": "decimal",
+            "totalAmount": "decimal",
+        },
+        operation="SubmitInvoice",
+    )
+    status, errors = _soap_domain(wsdl)
     assert status == ValidationStatus.PASS
-    assert errors == []
+    assert _codes(errors) == []
+
+
+def test_soap_ubl_namespace_weak_passes_with_warning():
+    """No recognizable invoice fields, but the UBL targetNamespace makes it eligible."""
+    wsdl = _wsdl(
+        "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2",
+        {"payload": "string"},
+        operation="Exchange",
+    )
+    status, errors = _soap_domain(wsdl)
+    assert status == ValidationStatus.PASS
+    assert "DOMAIN_INSUFFICIENT_SIGNALS" in _codes(errors)
+
+
+def test_soap_non_invoice_fails():
+    wsdl = _wsdl(
+        "http://example.com/weather",
+        {"temperature": "decimal", "city": "string"},
+        operation="GetWeather",
+    )
+    status, errors = _soap_domain(wsdl)
+    assert status == ValidationStatus.FAIL
+    assert "DOMAIN_NOT_EINVOICING" in _codes(errors)
+
+
+def test_soap_spec_unavailable_fails():
+    status, errors = _domain(None, protocol=Protocol.SOAP)
+    assert status == ValidationStatus.FAIL
+    assert "DOMAIN_SPEC_UNAVAILABLE" in _codes(errors)
 
 
 # --------------------------------------------------------------------------- #
