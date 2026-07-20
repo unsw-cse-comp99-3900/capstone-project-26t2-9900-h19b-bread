@@ -23,3 +23,9 @@ def test_all_history_reads_require_authentication() -> None:
     ]
 
     assert all(operation.get("security") == [{"HTTPBearer": []}] for operation in read_operations)
+
+
+def test_validation_result_callback_requires_authentication() -> None:
+    operation = app.openapi()["paths"]["/api/apis/{api_id}/validation-result"]["post"]
+
+    assert operation.get("security") == [{"HTTPBearer": []}]

@@ -26,8 +26,12 @@ except ModuleNotFoundError as exc:
 
     def get_lifecycle_actor() -> dict | None:
         return None
+
+    def get_validation_callback_actor() -> dict | None:
+        return None
 else:
     get_lifecycle_actor = require_role("PUBLISHER", "ADMIN")
+    get_validation_callback_actor = require_role("ADMIN")
 
 
 def get_lifecycle_service() -> LifecycleService:
@@ -46,6 +50,7 @@ class SubmitRequest(BaseModel):
 
 
 class ValidationResultRequest(BaseModel):
+    validation_run_id: int | None = None
     passed: bool | None = None
     overall_status: str | None = None
     stage: str = ValidationStage.SPECIFICATION_VALIDATION.value
@@ -164,6 +169,7 @@ def validation_result_endpoint(
     api_id: int,
     request: ValidationResultRequest,
     service: LifecycleService = Depends(get_lifecycle_service),
+    _current_user: dict | None = Depends(get_validation_callback_actor),
 ) -> LifecycleResponse:
     message = json.dumps(request.result_json) if request.result_json is not None else None
     validation_result = ValidationResultInput(
@@ -175,6 +181,7 @@ def validation_result_endpoint(
     result = service.handle_validation_result(
         api_id=api_id,
         validation_result=validation_result,
+        validation_run_id=request.validation_run_id,
     )
     return _to_response(result)
 
