@@ -5,10 +5,19 @@ from psycopg.errors import IntegrityError
 
 from app.lifecycle import (
     ApiNotFoundError,
+    ApiPermissionError,
+    CurrentValidationRunNotFoundError,
     CurrentVersionNotFoundError,
     InvalidStatusTransitionError,
 )
-from app.routers import auth, lifecycle, submissions, validation
+from app.routers import (
+    auth,
+    lifecycle,
+    schema_mapping,
+    submissions,
+    validation,
+    version_history,
+)
 
 app = FastAPI(title="E-Invoicing API Publisher Backend")
 
@@ -21,9 +30,11 @@ app.add_middleware(
 )
 
 app.include_router(validation.router, prefix="/api/v1")
+app.include_router(schema_mapping.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(submissions.router, prefix="/api/v1")
 app.include_router(lifecycle.router, prefix="/api")
+app.include_router(version_history.router, prefix="/api")
 
 
 @app.exception_handler(ApiNotFoundError)
@@ -42,6 +53,28 @@ async def handle_version_not_found(
     return JSONResponse(
         status_code=404,
         content={"error": "CurrentVersionNotFound", "message": str(exc)},
+    )
+
+
+@app.exception_handler(ApiPermissionError)
+async def handle_api_permission_error(
+    request: Request,
+    exc: ApiPermissionError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=403,
+        content={"error": "ApiPermissionDenied", "message": str(exc)},
+    )
+
+
+@app.exception_handler(CurrentValidationRunNotFoundError)
+async def handle_validation_run_not_found(
+    request: Request,
+    exc: CurrentValidationRunNotFoundError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content={"error": "CurrentValidationRunNotFound", "message": str(exc)},
     )
 
 

@@ -1,6 +1,6 @@
 from collections.abc import Callable
 
-from app.lifecycle.enums import ValidationStage
+from app.lifecycle.enums import ApiStatus, ValidationStage
 from app.lifecycle.schemas import LifecycleResult, ValidationResultInput
 from app.lifecycle.service import LifecycleService
 from app.schemas.validation_schema import (
@@ -35,8 +35,17 @@ class SubmissionCoordinator:
         self.service = service
         self.validate = validate
 
-    def submit_only(self, api_id: int, actor_id: int) -> LifecycleResult:
-        return self.service.submit_api(api_id=api_id, actor_id=actor_id)
+    def submit_only(
+        self,
+        api_id: int,
+        actor_id: int,
+        is_admin: bool = False,
+    ) -> LifecycleResult:
+        return self.service.submit_api(
+            api_id=api_id,
+            actor_id=actor_id,
+            is_admin=is_admin,
+        )
 
     def submit_and_validate(
         self,
@@ -44,28 +53,34 @@ class SubmissionCoordinator:
         actor_id: int,
         protocol: Protocol,
         spec_content: str,
+        is_admin: bool = False,
     ) -> LifecycleResult:
-        self.service.submit_api(api_id=api_id, actor_id=actor_id)
+        result = self.service.submit_api(
+            api_id=api_id,
+            actor_id=actor_id,
+            is_admin=is_admin,
+        )
 
         response = self.validate(protocol, spec_content)
-        passed = response.overall_status == ValidationStatus.PASS
-        error_detail = (
-            "; ".join(error.message for error in response.errors)
-            if response.errors
-            else None
-        )
-
-        validation_result = ValidationResultInput(
-            passed=passed,
-            stage=ValidationStage.SPECIFICATION_VALIDATION,
-            message=(
-                "Specification validation passed."
-                if passed
-                else "Specification validation failed."
-            ),
-            error_detail=error_detail,
-        )
-        return self.service.handle_validation_result(
-            api_id=api_id,
-            validation_result=validation_result,
-        )
+        for stage_result in response.stages:
+            if stage_result.status == ValidationStatus.NOT_RUN:
+                continue
+            stage = ValidationStage(stage_result.stage.value.upper())
+            stage_errors = [
+                error.message
+                for error in response.errors
+                if error.stage is not None and error.stage.value == stage_result.stage.value
+            ]
+            result = self.service.handle_validation_result(
+                api_id=api_id,
+                validation_run_id=result.validation_run_id,
+                validation_result=ValidationResultInput(
+                    passed=stage_result.status == ValidationStatus.PASS,
+                    stage=stage,
+                    message=f"{stage.value} {stage_result.status.value}.",
+                    error_detail="; ".join(stage_errors) or None,
+                ),
+            )
+            if result.status in {ApiStatus.PUBLISHED, ApiStatus.REJECTED}:
+                break
+        return result
