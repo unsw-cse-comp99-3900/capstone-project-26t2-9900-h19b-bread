@@ -26,6 +26,10 @@ def test_all_history_reads_require_authentication() -> None:
 
 
 def test_validation_result_callback_requires_authentication() -> None:
-    operation = app.openapi()["paths"]["/api/apis/{api_id}/validation-result"]["post"]
+    openapi = app.openapi()
+    operation = openapi["paths"]["/api/apis/{api_id}/validation-result"]["post"]
 
     assert operation.get("security") == [{"HTTPBearer": []}]
+    assert "validation_run_id" in openapi["components"]["schemas"][
+        "ValidationResultRequest"
+    ]["required"]

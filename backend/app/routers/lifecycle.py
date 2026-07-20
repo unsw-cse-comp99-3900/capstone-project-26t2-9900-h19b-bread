@@ -50,7 +50,7 @@ class SubmitRequest(BaseModel):
 
 
 class ValidationResultRequest(BaseModel):
-    validation_run_id: int | None = None
+    validation_run_id: int
     passed: bool | None = None
     overall_status: str | None = None
     stage: str = ValidationStage.SPECIFICATION_VALIDATION.value
