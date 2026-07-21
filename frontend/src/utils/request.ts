@@ -63,4 +63,9 @@ export function apiPost<T>(url: string, data?: unknown): Promise<T> {
   return request.post(url, data) as unknown as Promise<T>;
 }
 
+/** Typed PUT helper — avoids `as unknown as` in every service file. */
+export function apiPut<T>(url: string, data?: unknown): Promise<T> {
+  return request.put(url, data) as unknown as Promise<T>;
+}
+
 export default request;

@@ -29,6 +29,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import PublisherLayout from '../../components/PublisherLayout';
+import APIInfoForm from '../../components/APIInfoForm';
 import type { RootState } from '../../store';
 import type { ApiHistoryItem, ApiRecord, ApiStatus } from '../../types/api';
 import { mapStatus } from '../../types/api';
@@ -112,6 +113,7 @@ const ApiDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [api, setApi] = useState<ApiRecord | null>(null);
   const [withdrawing, setWithdrawing] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   const loadDetail = useCallback(async () => {
     if (!id) {
@@ -212,6 +214,10 @@ const ApiDetailPage: React.FC = () => {
 
   const currentStatus = api.status;
   const { color, icon } = statusConfig[currentStatus];
+  const canUpdate =
+    canManage &&
+    currentStatus !== 'Withdrawn' &&
+    currentStatus !== 'Validating';
 
   return (
     <PublisherLayout>
@@ -226,8 +232,22 @@ const ApiDetailPage: React.FC = () => {
           </Button>
 
           <Space wrap>
-            <Tooltip title={canManage ? 'Update (coming soon)' : 'No permission to update'}>
-              <Button icon={<EditOutlined />} disabled>
+            <Tooltip
+              title={
+                !canManage
+                  ? 'No permission to update'
+                  : currentStatus === 'Withdrawn'
+                    ? 'Withdrawn APIs cannot be updated'
+                    : currentStatus === 'Validating'
+                      ? 'Finish validation before updating'
+                      : 'Update'
+              }
+            >
+              <Button
+                icon={<EditOutlined />}
+                disabled={!canUpdate}
+                onClick={() => setEditOpen(true)}
+              >
                 Edit
               </Button>
             </Tooltip>
@@ -353,6 +373,15 @@ const ApiDetailPage: React.FC = () => {
           )}
         </Card>
       </div>
+
+      <APIInfoForm
+        open={editOpen}
+        editApiId={api.key}
+        onClose={() => setEditOpen(false)}
+        onComplete={() => {
+          void loadDetail();
+        }}
+      />
     </PublisherLayout>
   );
 };

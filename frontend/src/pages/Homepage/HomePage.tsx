@@ -89,6 +89,7 @@ function toRecord(item: SubmissionListItem): ApiRecord {
 
 const HomePage: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
+  const [editApiId, setEditApiId] = useState<string | null>(null);
   const [listTab, setListTab] = useState<ListTab>('all');
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -96,6 +97,7 @@ const HomePage: React.FC = () => {
   const [tableData, setTableData] = useState<ApiRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
 
   const navigate = useNavigate();
   const user = useSelector((s: RootState) => s.auth.user);
@@ -135,15 +137,28 @@ const HomePage: React.FC = () => {
       if (statusFilter !== 'all' && row.status !== statusFilter) return false;
       if (authorFilter !== 'all' && row.creatorId !== authorFilter) return false;
       if (!q) return true;
-      return (
-        row.name.toLowerCase().includes(q) ||
-        row.endpoint.toLowerCase().includes(q) ||
-        row.creator.toLowerCase().includes(q) ||
-        row.status.toLowerCase().includes(q) ||
-        row.category.toLowerCase().includes(q)
-      );
+      const haystack = [
+        row.name,
+        row.endpoint,
+        row.creator,
+        row.creatorId,
+        row.status,
+        row.category,
+        row.protocol,
+        row.inputFormat,
+        row.outputFormat,
+        row.authMethod,
+        row.key,
+      ]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
     });
   }, [tableData, listTab, keyword, statusFilter, authorFilter]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [listTab, keyword, statusFilter, authorFilter]);
 
   const handleWithdraw = async (record: ApiRecord) => {
     if (!user) return;
@@ -246,14 +261,32 @@ const HomePage: React.FC = () => {
     width:  108,
     render: (_, record) => {
       const canManage = !!record.canManage;
+      const canUpdate =
+        canManage &&
+        record.status !== 'Withdrawn' &&
+        record.status !== 'Validating';
       return (
         <Space size={6}>
-          <Tooltip title={canManage ? 'Update (coming soon)' : 'No permission to update'}>
+          <Tooltip
+            title={
+              !canManage
+                ? 'No permission to update'
+                : record.status === 'Withdrawn'
+                  ? 'Withdrawn APIs cannot be updated'
+                  : record.status === 'Validating'
+                    ? 'Finish validation before updating'
+                    : 'Update'
+            }
+          >
             <Button
               size="small"
               icon={<EditOutlined />}
               className="hp-btn-update"
-              disabled
+              disabled={!canUpdate}
+              onClick={() => {
+                setEditApiId(record.key);
+                setModalOpen(true);
+              }}
             />
           </Tooltip>
           <Tooltip title="Schema Mapping">
@@ -317,7 +350,14 @@ const HomePage: React.FC = () => {
             <Button icon={<SwapOutlined />} onClick={() => navigate('/schema-mapping')}>
               Schema Mapping
             </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => {
+                setEditApiId(null);
+                setModalOpen(true);
+              }}
+            >
               Publish New API
             </Button>
           </div>
@@ -337,7 +377,7 @@ const HomePage: React.FC = () => {
           <Input
             allowClear
             prefix={<SearchOutlined />}
-            placeholder="Search by name, URL, creator, or status"
+            placeholder="Search by name, URL, creator, status, protocol…"
             value={keyword}
             onChange={e => setKeyword(e.target.value)}
             className="hp-toolbar__search"
@@ -364,7 +404,12 @@ const HomePage: React.FC = () => {
           columns={columns}
           dataSource={filteredData}
           loading={loading}
-          pagination={{ pageSize: 8, showSizeChanger: false }}
+          pagination={{
+            current: page,
+            pageSize: 8,
+            showSizeChanger: false,
+            onChange: next => setPage(next),
+          }}
           bordered
           className="hp-table"
           tableLayout="fixed"
@@ -374,7 +419,11 @@ const HomePage: React.FC = () => {
 
       <APIInfoForm
         open={modalOpen}
-        onClose={() => setModalOpen(false)}
+        editApiId={editApiId}
+        onClose={() => {
+          setModalOpen(false);
+          setEditApiId(null);
+        }}
         onComplete={() => {
           void loadList();
         }}
