@@ -43,6 +43,88 @@ capstone-project-26t2-9900-h19b-bread/
 
 ---
 
+## Quick deployment with Docker (recommended)
+
+Docker Compose runs the complete project with three services:
+
+- `db`: PostgreSQL 16 with a persistent named volume and automatic first-run schema initialization.
+- `backend`: FastAPI on the official Python 3.11 image.
+- `frontend`: a production Vite build served by Nginx, with `/api` proxied to the backend.
+
+No host Python, virtual environment, Node.js, or local PostgreSQL installation is required.
+
+### Start the complete project
+
+PowerShell:
+
+```powershell
+Copy-Item docker/.env.example docker/.env
+
+# Replace POSTGRES_PASSWORD, DATABASE_URL, and JWT_SECRET_KEY in docker/.env.
+docker compose --env-file docker/.env up --build --detach
+docker compose --env-file docker/.env ps
+```
+
+macOS/Linux:
+
+```bash
+cp docker/.env.example docker/.env
+
+# Replace POSTGRES_PASSWORD, DATABASE_URL, and JWT_SECRET_KEY in docker/.env.
+docker compose --env-file docker/.env up --build --detach
+docker compose --env-file docker/.env ps
+```
+
+Compose refuses to start if `POSTGRES_PASSWORD`, `DATABASE_URL`, or
+`JWT_SECRET_KEY` is missing. Keep the credentials in `DATABASE_URL` aligned with
+the `POSTGRES_*` values. URL-encode reserved password characters—for example,
+use `%40` for `@`.
+
+Open:
+
+| URL | Service |
+|-----|---------|
+| `http://localhost:8080` | Frontend |
+| `http://localhost:8000` | Backend health response |
+| `http://localhost:8000/docs` | Swagger UI |
+| `localhost:5432` | PostgreSQL (for local database tools) |
+
+Confirm the backend container uses the required interpreter:
+
+```bash
+docker compose --env-file docker/.env exec backend python --version
+# Python 3.11.x
+```
+
+### Stop, restart, and inspect
+
+```bash
+docker compose --env-file docker/.env stop
+docker compose --env-file docker/.env start
+docker compose --env-file docker/.env logs --follow
+docker compose --env-file docker/.env down
+```
+
+`down` keeps the PostgreSQL named volume. The SQL file selected by `DB_INIT_SQL`
+runs only when PostgreSQL creates a new empty volume. To intentionally rebuild the
+database from the selected SQL file, back up required data and then run:
+
+```bash
+docker compose --env-file docker/.env down --volumes
+docker compose --env-file docker/.env up --build --detach
+```
+
+The default schema is the updated `DB/19.7database.sql`, inherited from the
+database integration branch. Set `DB_INIT_SQL` in `docker/.env` to another
+repository-root SQL file when testing a different schema revision.
+
+For a fresh machine or server, copy/clone the repository, create `docker/.env`,
+and run the same `docker compose ... up` command. Application data moves separately:
+use `pg_dump`/`pg_restore` or a Docker volume backup when existing PostgreSQL data
+must be migrated rather than initialized from SQL.
+
+---
+
 ## 1. Database Setup
 
 ### Start PostgreSQL with Docker
