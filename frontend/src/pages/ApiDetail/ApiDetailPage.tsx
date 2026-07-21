@@ -32,8 +32,8 @@ import PublisherLayout from '../../components/PublisherLayout';
 import type { RootState } from '../../store';
 import type { ApiHistoryItem, ApiRecord, ApiStatus } from '../../types/api';
 import { mapStatus } from '../../types/api';
-import { getMockApiById } from '../../mock/dashboardApis';
 import { withdrawApi } from '../../services/lifecycle';
+import { getSubmissions, type SubmissionListItem } from '../../services/submission';
 import {
   getApiHistory,
   getVersionDetail,
@@ -69,30 +69,38 @@ function formatDate(iso: string): string {
 function eventToHistory(event: VersionEvent, versionLabel: string): ApiHistoryItem {
   return {
     version:   versionLabel,
-      action:    event.event_type.replace(/_/g, ' '),
+    action:    event.event_type.replace(/_/g, ' '),
     actor:     event.actor_user_id != null ? `user #${event.actor_user_id}` : 'system',
     note:      event.message ?? `${event.from_status ?? '—'} → ${event.to_status ?? '—'}`,
     changedAt: event.created_at,
   };
 }
 
-function detailToRecord(apiId: string, detail: VersionDetail, history: ApiHistoryItem[]): ApiRecord {
+function detailToRecord(
+  apiId: string,
+  detail: VersionDetail,
+  history: ApiHistoryItem[],
+  listItem?: SubmissionListItem,
+): ApiRecord {
   return {
     key:          apiId,
-    name:         detail.api_name,
+    name:         listItem?.api_name ?? detail.api_name,
     protocol:     detail.protocol_type,
     endpoint:     detail.endpoint_url,
     authMethod:   detail.auth?.auth_method ?? '—',
     category:     detail.capability_category ?? detail.category ?? '—',
-    status:       mapStatus(detail.status),
-    creator:      `user #${detail.created_by}`,
-    creatorId:    String(detail.created_by),
+    status:       mapStatus(listItem?.status ?? detail.status),
+    creator:      listItem?.submitted_by_name?.trim()
+      || (listItem ? `user #${listItem.submitted_by}` : `user #${detail.created_by}`),
+    creatorId:    String(listItem?.submitted_by ?? detail.created_by),
     description:  detail.description ?? 'No description provided.',
     inputFormat:  detail.input_format ?? '—',
     outputFormat: detail.output_format ?? '—',
-    createdAt:    detail.created_at,
-    updatedAt:    detail.published_at ?? detail.created_at,
+    createdAt:    listItem?.created_at ?? detail.created_at,
+    updatedAt:    listItem?.updated_at ?? detail.published_at ?? detail.created_at,
     history,
+    isMine:       listItem?.is_current_user_api,
+    canManage:    listItem?.can_manage,
   };
 }
 
@@ -103,7 +111,6 @@ const ApiDetailPage: React.FC = () => {
 
   const [loading, setLoading] = useState(true);
   const [api, setApi] = useState<ApiRecord | null>(null);
-  const [fromMock, setFromMock] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
 
   const loadDetail = useCallback(async () => {
@@ -115,11 +122,16 @@ const ApiDetailPage: React.FC = () => {
 
     setLoading(true);
     try {
-      const versions = await getVersions(id);
+      const [versions, listItems] = await Promise.all([
+        getVersions(id),
+        getSubmissions().catch(() => [] as SubmissionListItem[]),
+      ]);
       const current =
         versions.items.find(v => v.is_current) ?? versions.items[0];
 
       if (!current) throw new Error('No versions');
+
+      const listItem = listItems.find(item => String(item.api_id) === id);
 
       const [detail, historyPage] = await Promise.all([
         getVersionDetail(id, current.version_id),
@@ -133,16 +145,9 @@ const ApiDetailPage: React.FC = () => {
         eventToHistory(ev, versionMap.get(ev.version_id) ?? `v#${ev.version_id}`),
       );
 
-      setApi(detailToRecord(id, detail, history));
-      setFromMock(false);
+      setApi(detailToRecord(id, detail, history, listItem));
     } catch {
-      const mock = getMockApiById(id);
-      if (mock) {
-        setApi(mock);
-        setFromMock(true);
-      } else {
-        setApi(null);
-      }
+      setApi(null);
     } finally {
       setLoading(false);
     }
@@ -156,33 +161,14 @@ const ApiDetailPage: React.FC = () => {
     if (!api || !user) return;
     setWithdrawing(true);
     try {
-      if (!fromMock) {
-        await withdrawApi(api.key, {
-          actor_id: Number(user.user_id),
-          reason:   'Withdrawn by publisher',
-        });
-      }
-      setApi(prev =>
-        prev
-          ? {
-              ...prev,
-              status: 'Withdrawn',
-              history: [
-                {
-                  version:   prev.history[0]?.version ?? 'v1.0',
-                  action:    'Withdrawn',
-                  actor:     user.email,
-                  note:      'Withdrawn by publisher.',
-                  changedAt: new Date().toISOString(),
-                },
-                ...prev.history,
-              ],
-            }
-          : prev,
-      );
+      await withdrawApi(api.key, {
+        actor_id: Number(user.user_id),
+        reason:   'Withdrawn by publisher',
+      });
       message.success(`"${api.name}" has been withdrawn.`);
+      await loadDetail();
     } catch {
-      // interceptor shows error for real API failures
+      // interceptor shows error
     } finally {
       setWithdrawing(false);
     }
@@ -217,10 +203,12 @@ const ApiDetailPage: React.FC = () => {
     );
   }
 
-  const isOwner =
-    !!user &&
-    (api.creatorId === user.user_id ||
-      api.creator.toLowerCase() === user.email.toLowerCase());
+  const role = user?.role?.toUpperCase() ?? '';
+  const canManage =
+    api.canManage === true ||
+    (!!user && api.creatorId === user.user_id) ||
+    role === 'ADMIN' ||
+    role === 'MANAGER';
 
   const currentStatus = api.status;
   const { color, icon } = statusConfig[currentStatus];
@@ -238,8 +226,8 @@ const ApiDetailPage: React.FC = () => {
           </Button>
 
           <Space wrap>
-            <Tooltip title="Update (coming soon)">
-              <Button icon={<EditOutlined />} disabled={!isOwner}>
+            <Tooltip title={canManage ? 'Update (coming soon)' : 'No permission to update'}>
+              <Button icon={<EditOutlined />} disabled>
                 Edit
               </Button>
             </Tooltip>
@@ -257,13 +245,13 @@ const ApiDetailPage: React.FC = () => {
               okText="Withdraw"
               okButtonProps={{ danger: true }}
               cancelText="Cancel"
-              disabled={!isOwner || currentStatus === 'Withdrawn'}
+              disabled={!canManage || currentStatus === 'Withdrawn'}
               onConfirm={() => void handleWithdraw()}
             >
               <Tooltip
                 title={
-                  !isOwner
-                    ? 'Only the creator can withdraw this API'
+                  !canManage
+                    ? 'No permission to withdraw this API'
                     : currentStatus === 'Withdrawn'
                       ? 'Already withdrawn'
                       : 'Withdraw'
@@ -273,7 +261,7 @@ const ApiDetailPage: React.FC = () => {
                   danger
                   icon={<DeleteOutlined />}
                   loading={withdrawing}
-                  disabled={!isOwner || currentStatus === 'Withdrawn'}
+                  disabled={!canManage || currentStatus === 'Withdrawn'}
                 >
                   Withdraw
                 </Button>
@@ -281,12 +269,6 @@ const ApiDetailPage: React.FC = () => {
             </Popconfirm>
           </Space>
         </div>
-
-        {fromMock && (
-          <Tag color="orange" style={{ alignSelf: 'flex-start' }}>
-            Showing mock data (backend detail not available for this ID)
-          </Tag>
-        )}
 
         <Card className="apd-glass apd-hero-card" bordered={false}>
           <div className="apd-hero">

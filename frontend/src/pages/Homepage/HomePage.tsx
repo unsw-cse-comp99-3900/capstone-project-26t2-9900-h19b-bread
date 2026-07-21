@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Button,
   Table,
@@ -31,7 +31,12 @@ import APIInfoForm from '../../components/APIInfoForm';
 import PublisherLayout from '../../components/PublisherLayout';
 import type { RootState } from '../../store';
 import type { ApiRecord, ApiStatus } from '../../types/api';
-import { getMockApiList } from '../../mock/dashboardApis';
+import { mapStatus } from '../../types/api';
+import {
+  getSubmissions,
+  type SubmissionListItem,
+} from '../../services/submission';
+import { withdrawApi } from '../../services/lifecycle';
 import './Homepage.scss';
 
 const { Title } = Typography;
@@ -60,29 +65,75 @@ const STATUS_FILTER_OPTIONS = [
   { value: 'Withdrawn', label: 'Withdrawn' },
 ];
 
+function toRecord(item: SubmissionListItem): ApiRecord {
+  return {
+    key:          String(item.api_id),
+    name:         item.api_name,
+    protocol:     item.protocol_type || 'REST',
+    endpoint:     item.endpoint_url || '—',
+    authMethod:   '—',
+    category:     item.capability_category || '—',
+    status:       mapStatus(item.status),
+    creator:      item.submitted_by_name?.trim() || `user #${item.submitted_by}`,
+    creatorId:    String(item.submitted_by),
+    description:  '',
+    inputFormat:  item.input_format || '—',
+    outputFormat: item.output_format || '—',
+    createdAt:    item.created_at,
+    updatedAt:    item.updated_at,
+    history:      [],
+    isMine:       item.is_current_user_api,
+    canManage:    item.can_manage,
+  };
+}
+
 const HomePage: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [listTab, setListTab] = useState<ListTab>('all');
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [tableData, setTableData] = useState<ApiRecord[]>(() => getMockApiList());
+  const [authorFilter, setAuthorFilter] = useState<string>('all');
+  const [tableData, setTableData] = useState<ApiRecord[]>([]);
+  const [loading, setLoading] = useState(false);
   const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
 
   const navigate = useNavigate();
   const user = useSelector((s: RootState) => s.auth.user);
+  const authors = useSelector((s: RootState) => s.authors.items);
+
+  const loadList = useCallback(async () => {
+    setLoading(true);
+    try {
+      const items = await getSubmissions();
+      setTableData(items.map(toRecord));
+    } catch {
+      // interceptor shows error
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadList();
+  }, [loadList]);
+
+  const authorOptions = useMemo(
+    () => [
+      { value: 'all', label: 'All creators' },
+      ...authors.map(a => ({
+        value: String(a.user_id),
+        label: a.name || `user #${a.user_id}`,
+      })),
+    ],
+    [authors],
+  );
 
   const filteredData = useMemo(() => {
     const q = keyword.trim().toLowerCase();
     return tableData.filter(row => {
-      const isMine =
-        !!user &&
-        (row.creatorId === user.user_id ||
-          row.creator.toLowerCase() === user.email.toLowerCase());
-
-      if (listTab === 'mine' && !isMine) return false;
-
+      if (listTab === 'mine' && !row.isMine) return false;
       if (statusFilter !== 'all' && row.status !== statusFilter) return false;
-
+      if (authorFilter !== 'all' && row.creatorId !== authorFilter) return false;
       if (!q) return true;
       return (
         row.name.toLowerCase().includes(q) ||
@@ -92,35 +143,23 @@ const HomePage: React.FC = () => {
         row.category.toLowerCase().includes(q)
       );
     });
-  }, [tableData, listTab, keyword, statusFilter, user]);
+  }, [tableData, listTab, keyword, statusFilter, authorFilter]);
 
-  const handleWithdraw = (record: ApiRecord) => {
+  const handleWithdraw = async (record: ApiRecord) => {
+    if (!user) return;
     setWithdrawingId(record.key);
-    setTimeout(() => {
-      setTableData(prev =>
-        prev.map(r =>
-          r.key === record.key
-            ? {
-                ...r,
-                status: 'Withdrawn' as ApiStatus,
-                updatedAt: new Date().toISOString(),
-                history: [
-                  {
-                    version: r.history[0]?.version ?? 'v1.0',
-                    action: 'Withdrawn',
-                    actor: user?.email ?? 'unknown',
-                    note: 'Withdrawn by publisher (mock).',
-                    changedAt: new Date().toISOString(),
-                  },
-                  ...r.history,
-                ],
-              }
-            : r,
-        ),
-      );
+    try {
+      await withdrawApi(record.key, {
+        actor_id: Number(user.user_id),
+        reason:   'Withdrawn by publisher',
+      });
       message.success(`"${record.name}" has been withdrawn.`);
+      await loadList();
+    } catch {
+      // interceptor shows error
+    } finally {
       setWithdrawingId(null);
-    }, 400);
+    }
   };
 
   const baseColumns: TableColumnsType<ApiRecord> = [
@@ -149,7 +188,7 @@ const HomePage: React.FC = () => {
       align:     'center',
       width:     96,
       render: (protocol: string) => (
-        <Tag color={protocolColorMap[protocol]}>{protocol}</Tag>
+        <Tag color={protocolColorMap[protocol] ?? 'default'}>{protocol}</Tag>
       ),
     },
     {
@@ -162,13 +201,6 @@ const HomePage: React.FC = () => {
           <span style={{ cursor: 'default' }}>{endpoint}</span>
         </Tooltip>
       ),
-    },
-    {
-      title:     'Auth Method',
-      dataIndex: 'authMethod',
-      key:       'authMethod',
-      align:     'center',
-      width:     110,
     },
     {
       title:     'Category',
@@ -212,40 +244,56 @@ const HomePage: React.FC = () => {
     key:    'operate',
     align:  'center',
     width:  108,
-    render: (_, record) => (
-      <Space size={6}>
-        <Tooltip title="Update (coming soon)">
-          <Button size="small" icon={<EditOutlined />} className="hp-btn-update" disabled />
-        </Tooltip>
-        <Tooltip title="Schema Mapping">
-          <Button
-            size="small"
-            icon={<SwapOutlined />}
-            className="hp-btn-mapping"
-            onClick={() => navigate(`/apis/${record.key}/mapping`)}
-          />
-        </Tooltip>
-        <Popconfirm
-          title="Withdraw this API?"
-          description="It will be removed from the repository."
-          okText="Withdraw"
-          okButtonProps={{ danger: true }}
-          cancelText="Cancel"
-          disabled={record.status === 'Withdrawn'}
-          onConfirm={() => handleWithdraw(record)}
-        >
-          <Tooltip title={record.status === 'Withdrawn' ? 'Already withdrawn' : 'Withdraw'}>
+    render: (_, record) => {
+      const canManage = !!record.canManage;
+      return (
+        <Space size={6}>
+          <Tooltip title={canManage ? 'Update (coming soon)' : 'No permission to update'}>
             <Button
               size="small"
-              icon={<DeleteOutlined />}
-              className="hp-btn-withdraw"
-              loading={withdrawingId === record.key}
-              disabled={record.status === 'Withdrawn'}
+              icon={<EditOutlined />}
+              className="hp-btn-update"
+              disabled
             />
           </Tooltip>
-        </Popconfirm>
-      </Space>
-    ),
+          <Tooltip title="Schema Mapping">
+            <Button
+              size="small"
+              icon={<SwapOutlined />}
+              className="hp-btn-mapping"
+              onClick={() => navigate(`/apis/${record.key}/mapping`)}
+            />
+          </Tooltip>
+          <Popconfirm
+            title="Withdraw this API?"
+            description="It will be removed from the repository."
+            okText="Withdraw"
+            okButtonProps={{ danger: true }}
+            cancelText="Cancel"
+            disabled={!canManage || record.status === 'Withdrawn'}
+            onConfirm={() => void handleWithdraw(record)}
+          >
+            <Tooltip
+              title={
+                !canManage
+                  ? 'No permission to withdraw'
+                  : record.status === 'Withdrawn'
+                    ? 'Already withdrawn'
+                    : 'Withdraw'
+              }
+            >
+              <Button
+                size="small"
+                icon={<DeleteOutlined />}
+                className="hp-btn-withdraw"
+                loading={withdrawingId === record.key}
+                disabled={!canManage || record.status === 'Withdrawn'}
+              />
+            </Tooltip>
+          </Popconfirm>
+        </Space>
+      );
+    },
   };
 
   const columns: TableColumnsType<ApiRecord> =
@@ -262,17 +310,17 @@ const HomePage: React.FC = () => {
               API Publisher — Dashboard
             </Title>
             <span className="hp-card__desc">
-              Browse all published APIs or manage your own submissions
+              Browse enterprise APIs or manage your own submissions
             </span>
           </div>
-            <div className="hp-card__header-actions">
-              <Button icon={<SwapOutlined />} onClick={() => navigate('/schema-mapping')}>
-                Schema Mapping
-              </Button>
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
-                Publish New API
-              </Button>
-            </div>
+          <div className="hp-card__header-actions">
+            <Button icon={<SwapOutlined />} onClick={() => navigate('/schema-mapping')}>
+              Schema Mapping
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
+              Publish New API
+            </Button>
+          </div>
         </div>
 
         <Tabs
@@ -300,11 +348,22 @@ const HomePage: React.FC = () => {
             options={STATUS_FILTER_OPTIONS}
             className="hp-toolbar__status"
           />
+          {listTab === 'all' && (
+            <Select
+              value={authorFilter}
+              onChange={setAuthorFilter}
+              options={authorOptions}
+              className="hp-toolbar__status"
+              showSearch
+              optionFilterProp="label"
+            />
+          )}
         </div>
 
         <Table<ApiRecord>
           columns={columns}
           dataSource={filteredData}
+          loading={loading}
           pagination={{ pageSize: 8, showSizeChanger: false }}
           bordered
           className="hp-table"
@@ -317,7 +376,7 @@ const HomePage: React.FC = () => {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onComplete={() => {
-          message.info('Submission saved. List will refresh when the backend list API is ready.');
+          void loadList();
         }}
       />
     </PublisherLayout>

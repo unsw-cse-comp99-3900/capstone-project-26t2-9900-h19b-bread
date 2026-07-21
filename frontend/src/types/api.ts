@@ -9,21 +9,23 @@ export interface ApiHistoryItem {
 }
 
 export interface ApiRecord {
-  key:         string;
-  name:        string;
-  protocol:    string;
-  endpoint:    string;
-  authMethod:  string;
-  category:    string;
-  status:      ApiStatus;
-  creator:     string;
-  creatorId:   string;
-  description: string;
-  inputFormat: string;
+  key:          string;
+  name:         string;
+  protocol:     string;
+  endpoint:     string;
+  authMethod:   string;
+  category:     string;
+  status:       ApiStatus;
+  creator:      string;
+  creatorId:    string;
+  description:  string;
+  inputFormat:  string;
   outputFormat: string;
-  createdAt:   string;
-  updatedAt:   string;
-  history:     ApiHistoryItem[];
+  createdAt:    string;
+  updatedAt:    string;
+  history:      ApiHistoryItem[];
+  isMine?:      boolean;
+  canManage?:   boolean;
 }
 
 export function mapStatus(s: string): ApiStatus {
