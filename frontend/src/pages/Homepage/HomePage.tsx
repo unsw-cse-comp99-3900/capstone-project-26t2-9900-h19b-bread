@@ -217,8 +217,13 @@ const HomePage: React.FC = () => {
         <Tooltip title="Update (coming soon)">
           <Button size="small" icon={<EditOutlined />} className="hp-btn-update" disabled />
         </Tooltip>
-        <Tooltip title="Schema Mapping (coming soon)">
-          <Button size="small" icon={<SwapOutlined />} className="hp-btn-mapping" disabled />
+        <Tooltip title="Schema Mapping">
+          <Button
+            size="small"
+            icon={<SwapOutlined />}
+            className="hp-btn-mapping"
+            onClick={() => navigate(`/apis/${record.key}/mapping`)}
+          />
         </Tooltip>
         <Popconfirm
           title="Withdraw this API?"
@@ -260,9 +265,14 @@ const HomePage: React.FC = () => {
               Browse all published APIs or manage your own submissions
             </span>
           </div>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
-            Publish New API
-          </Button>
+            <div className="hp-card__header-actions">
+              <Button icon={<SwapOutlined />} onClick={() => navigate('/schema-mapping')}>
+                Schema Mapping
+              </Button>
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
+                Publish New API
+              </Button>
+            </div>
         </div>
 
         <Tabs
