@@ -31,19 +31,6 @@ export const FORMAT_OPTIONS   = ['JSON', 'XML', 'UBL 2.1', 'CSV', 'EDIFACT', 'PD
 export const AUTH_OPTIONS     = ['OAuth 2.0', 'API Key', 'Basic Authentication', 'mTLS'] as const;
 export const CATEGORY_OPTIONS = ['Invoice Creation', 'Validation', 'Transmission', 'Archiving'] as const;
 
-// ── Mock data (placeholder until backend is available) ─────────────────────
-
-export const MOCK_URL_RESULT: ParsedInfo = {
-  name:         'E-Invoice Submission API',
-  endpoint:     'https://api.einvoice.example.com/v1/submit',
-  protocol:     'REST',
-  inputFormat:  'UBL 2.1',
-  outputFormat: 'JSON',
-  authMethod:   'OAuth 2.0',
-  category:     'Invoice Creation',
-  description:  'Accepts UBL 2.1-formatted electronic invoices and submits them to the national e-invoicing gateway for compliance verification.',
-};
-
 // ── Spec parsers ───────────────────────────────────────────────────────────
 
 export function parseOpenApiJson(obj: Record<string, unknown>): ParsedInfo {

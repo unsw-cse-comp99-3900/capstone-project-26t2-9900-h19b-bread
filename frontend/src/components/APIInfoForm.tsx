@@ -32,7 +32,6 @@ import {
   FORMAT_OPTIONS,
   AUTH_OPTIONS,
   CATEGORY_OPTIONS,
-  MOCK_URL_RESULT,
   parseOpenApiJson,
   parseWsdl,
 } from '../utils/helper';
@@ -418,6 +417,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onComplete, editApiId = n
         return;
       }
 
+      const authMethod = toBackendAuth(values.authMethod);
       let res: SubmissionApiResponse;
       if (importMethod === 'url') {
         res = await importFromUrl({
@@ -426,7 +426,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onComplete, editApiId = n
           protocol:            values.protocol,
           input_format:        values.inputFormat,
           output_format:       values.outputFormat,
-          auth_method:         values.authMethod,
+          auth_method:         authMethod,
           description:         values.description,
           capability_category: values.category,
           spec_url:            urlValue,
@@ -438,7 +438,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onComplete, editApiId = n
           protocol:            values.protocol,
           input_format:        values.inputFormat,
           output_format:       values.outputFormat,
-          auth_method:         values.authMethod,
+          auth_method:         authMethod,
           description:         values.description,
           capability_category: values.category,
           spec_content:        specContent!,
@@ -482,7 +482,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onComplete, editApiId = n
           protocol:            values.protocol,
           input_format:        values.inputFormat,
           output_format:       values.outputFormat,
-          auth_method:         values.authMethod,
+          auth_method:         toBackendAuth(values.authMethod),
           description:         values.description,
           capability_category: values.category,
           spec_content:        specContent,
@@ -526,8 +526,10 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onComplete, editApiId = n
             setParseError('Fetched spec but could not auto-parse fields. Please fill in the details manually.');
           }
         } catch {
-          setParseError('Could not fetch the URL for preview (CORS restriction). The backend will fetch the spec directly during submission — please fill in the form fields manually.');
-          applyParsed(MOCK_URL_RESULT);
+          setParseError(
+            'Could not fetch the URL in the browser (often CORS). ' +
+            'Leave fields empty or fill them manually — the backend will fetch the spec during submission.',
+          );
         } finally {
           setParsing(false);
           setCurrent(1);

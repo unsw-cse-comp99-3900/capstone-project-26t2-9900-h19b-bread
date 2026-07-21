@@ -101,10 +101,16 @@ export function getApiHistory(
   apiId: number | string,
   page = 1,
   pageSize = 50,
+  versionId?: number | string | null,
 ): Promise<EventPage> {
-  return apiGet<EventPage>(
-    `/api/apis/${apiId}/history?page=${page}&page_size=${pageSize}`,
-  );
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  if (versionId != null && versionId !== '') {
+    params.set('version_id', String(versionId));
+  }
+  return apiGet<EventPage>(`/api/apis/${apiId}/history?${params.toString()}`);
 }
 
 export type ProtocolType = 'REST' | 'SOAP' | 'WEB' | 'CLI';

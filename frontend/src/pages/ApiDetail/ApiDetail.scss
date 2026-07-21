@@ -3,7 +3,22 @@
 .apd-page {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 20px;
+  width: 100%;
+}
+
+.apd-spin {
+  width: 100%;
+
+  .ant-spin-container {
+    width: 100%;
+  }
+}
+
+.apd-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
   width: 100%;
 }
 
@@ -32,6 +47,8 @@
 
 .apd-glass.ant-card {
   @include glass-card(var(--surface-glass-strong));
+  border: 1px solid rgba(19, 74, 138, 0.12);
+  box-shadow: 0 8px 28px rgba(15, 45, 90, 0.08);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 
   .ant-card-head {
@@ -51,7 +68,7 @@
   }
 
   &:hover {
-    box-shadow: 0 12px 36px rgba(15, 45, 90, 0.1);
+    box-shadow: 0 14px 40px rgba(15, 45, 90, 0.12);
   }
 }
 
@@ -93,7 +110,7 @@
 }
 
 .apd-cards {
-  margin-top: 0;
+  margin: 0;
 }
 
 .apd-info-card {
