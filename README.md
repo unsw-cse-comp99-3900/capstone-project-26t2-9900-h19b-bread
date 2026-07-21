@@ -14,19 +14,26 @@ capstone-project-26t2-9900-h19b-bread/
 │   │   ├── pages/             # Route-level page components
 │   │   ├── components/        # Shared UI components
 │   │   ├── services/          # API call functions
-│   │   ├── utils/             # Axios instance, helper utilities
+│   │   ├── store/             # Redux store (auth, authors, …)
+│   │   ├── utils/             # Axios instance, helpers
 │   │   └── apidoc/            # Frontend–Backend API contract docs
-│   ├── package.json
-│   └── vite.config.ts
+│   ├── Dockerfile
+│   └── package.json
 ├── backend/                   # FastAPI (Python 3.11)
 │   ├── app/
 │   │   ├── main.py            # FastAPI entry point
+│   │   ├── core/              # DB, security, config
 │   │   ├── routers/           # API routes
 │   │   ├── schemas/           # Pydantic models
 │   │   └── services/          # Business logic
-│   ├── requirements.txt
-│   └── .python-version
-├── 24.6_DATABASE_1stversion.sql  # Database schema + seed data
+│   ├── .env.example
+│   ├── Dockerfile
+│   └── requirements.txt
+├── DB/
+│   └── 19.7database.sql       # Current schema + seed (default init)
+├── docker/
+│   └── .env.example           # Compose secrets / ports
+├── compose.yaml               # db + backend + frontend
 └── README.md
 ```
 
@@ -36,67 +43,91 @@ capstone-project-26t2-9900-h19b-bread/
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| Node.js | 18 + | Required for frontend |
+| Node.js | 18 + | Local frontend only |
 | npm | 9 + | Comes with Node.js |
-| Python | 3.11 | Required for backend |
-| Docker Desktop | latest | Required for PostgreSQL |
+| Python | 3.11 | Local backend only |
+| Docker Desktop | latest | Required for PostgreSQL / full deploy |
 
 ---
 
-## Quick deployment with Docker (recommended)
+## Two ways to run
 
-Docker Compose runs the complete project with three services:
+| Mode | What runs in Docker | What runs on host | Best for |
+|------|---------------------|-------------------|----------|
+| **A. Full Docker** | db + backend + frontend | nothing | Demo / shared server |
+| **B. Local dev** | db only | backend + frontend | Daily development |
 
-- `db`: PostgreSQL 16 with a persistent named volume and automatic first-run schema initialization.
-- `backend`: FastAPI on the official Python 3.11 image.
-- `frontend`: a production Vite build served by Nginx, with `/api` proxied to the backend.
+Both modes use the same schema file: `DB/19.7database.sql` (first volume init only).
 
-No host Python, virtual environment, Node.js, or local PostgreSQL installation is required.
+---
 
-### Start the complete project
+## A. Full Docker deploy
+
+Compose starts three services:
+
+- `db` — PostgreSQL 16, named volume, auto-init from `DB_INIT_SQL`
+- `backend` — FastAPI (Python 3.11 image)
+- `frontend` — Vite production build behind Nginx (`/api` proxied to backend)
+
+No host Python/Node/PostgreSQL install is required.
+
+### 1. Create env file
 
 PowerShell:
 
 ```powershell
 Copy-Item docker/.env.example docker/.env
-
-# Replace POSTGRES_PASSWORD, DATABASE_URL, and JWT_SECRET_KEY in docker/.env.
-docker compose --env-file docker/.env up --build --detach
-docker compose --env-file docker/.env ps
 ```
 
 macOS/Linux:
 
 ```bash
 cp docker/.env.example docker/.env
+```
 
-# Replace POSTGRES_PASSWORD, DATABASE_URL, and JWT_SECRET_KEY in docker/.env.
+Edit `docker/.env` and set real values for at least:
+
+- `POSTGRES_PASSWORD`
+- `DATABASE_URL` (must match `POSTGRES_*`; use host `db` inside Compose)
+- `JWT_SECRET_KEY`
+
+Compose refuses to start if those are missing. URL-encode reserved password characters (e.g. `@` → `%40`).
+
+Default ports / DB:
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `POSTGRES_DB` | `bread` | Database name |
+| `POSTGRES_USER` | `postgres` | DB user |
+| `POSTGRES_PORT` | `5432` | Host port for Postgres |
+| `BACKEND_PORT` | `8000` | Host port for API |
+| `APP_PORT` | `8080` | Host port for UI |
+| `DB_INIT_SQL` | `DB/19.7database.sql` | Init script (empty volume only) |
+
+### 2. Build and start
+
+```bash
 docker compose --env-file docker/.env up --build --detach
 docker compose --env-file docker/.env ps
 ```
-
-Compose refuses to start if `POSTGRES_PASSWORD`, `DATABASE_URL`, or
-`JWT_SECRET_KEY` is missing. Keep the credentials in `DATABASE_URL` aligned with
-the `POSTGRES_*` values. URL-encode reserved password characters—for example,
-use `%40` for `@`.
 
 Open:
 
 | URL | Service |
 |-----|---------|
 | `http://localhost:8080` | Frontend |
-| `http://localhost:8000` | Backend health response |
+| `http://localhost:8000` | Backend |
 | `http://localhost:8000/docs` | Swagger UI |
-| `localhost:5432` | PostgreSQL (for local database tools) |
+| `localhost:5432` | PostgreSQL (GUI tools) |
 
-Confirm the backend container uses the required interpreter:
+Confirm Python version in the backend container:
 
 ```bash
 docker compose --env-file docker/.env exec backend python --version
 # Python 3.11.x
 ```
 
-### Stop, restart, and inspect
+### 3. Stop / restart / logs
 
 ```bash
 docker compose --env-file docker/.env stop
@@ -105,83 +136,58 @@ docker compose --env-file docker/.env logs --follow
 docker compose --env-file docker/.env down
 ```
 
-`down` keeps the PostgreSQL named volume. The SQL file selected by `DB_INIT_SQL`
-runs only when PostgreSQL creates a new empty volume. To intentionally rebuild the
-database from the selected SQL file, back up required data and then run:
+`down` keeps the Postgres volume. Init SQL runs only on a **new empty volume**.
+
+To wipe data and re-init from SQL (destructive):
 
 ```bash
 docker compose --env-file docker/.env down --volumes
 docker compose --env-file docker/.env up --build --detach
 ```
 
-The default schema is the updated `DB/19.7database.sql`, inherited from the
-database integration branch. Set `DB_INIT_SQL` in `docker/.env` to another
-repository-root SQL file when testing a different schema revision.
-
-For a fresh machine or server, copy/clone the repository, create `docker/.env`,
-and run the same `docker compose ... up` command. Application data moves separately:
-use `pg_dump`/`pg_restore` or a Docker volume backup when existing PostgreSQL data
-must be migrated rather than initialized from SQL.
+To try another schema file, set `DB_INIT_SQL` in `docker/.env`, then recreate the volume as above.
 
 ---
 
-## 1. Database Setup
+## B. Local development (backend + frontend on host, DB in Docker)
 
-### Start PostgreSQL with Docker
+Use this when you want hot reload while still using the Compose Postgres.
 
-Make sure Docker Desktop is running, then execute:
+### 1. Start only the database
 
-```bash
-docker run --name sprint1-db \
-  -e POSTGRES_PASSWORD=mysecretpassword \
-  -p 5432:5432 \
-  -d postgres
-```
-
-If the container already exists, start it with:
+From the repository root, with `docker/.env` already configured (same as section A):
 
 ```bash
-docker start sprint1-db
+docker compose --env-file docker/.env up db --detach
+docker compose --env-file docker/.env ps
 ```
 
-### Connection Details
+Wait until `db` is healthy. First start creates volume and loads `DB/19.7database.sql`.
+
+Connection from the **host**:
 
 | Field | Value |
 |-------|-------|
-| Database Type | PostgreSQL |
-| Host | localhost |
-| Port | 5432 |
-| Database | postgres |
-| Username | postgres |
-| Password | mysecretpassword |
+| Host | `localhost` |
+| Port | `5432` (or `POSTGRES_PORT` in `docker/.env`) |
+| Database | `bread` |
+| Username | `postgres` |
+| Password | value of `POSTGRES_PASSWORD` |
 
-Connection string:
-
-```text
-postgresql://postgres:mysecretpassword@localhost:5432/postgres
-```
-
-### Initialize Schema
-
-1. Open DBeaver and connect using the settings above.
-2. Open `24.6_DATABASE_1stversion.sql`.
-3. Run the full script (`Alt + X` or **Execute SQL Script**).
-4. Confirm the following tables are created:
+Example URL (replace password):
 
 ```text
-enterprise · app_user · api_submission · api_version
-api_specification · auth_metadata · validation_run
-validation_result · schema_mapping
+postgresql://postgres:<password>@localhost:5432/bread
 ```
 
----
+Optional: open the same URL in DBeaver to inspect tables. Schema details: [`DB/readme.md`](DB/readme.md).
 
-## 2. Backend Setup & Start
+### 2. Backend (host)
 
 ```bash
 cd backend
 
-# Create and activate virtual environment (Python 3.11 required)
+# Python 3.11 required
 python3.11 -m venv .venv
 
 # Activate
@@ -190,112 +196,123 @@ source .venv/bin/activate
 # Windows:
 .venv\Scripts\activate
 
-# Install dependencies
 pip install -r requirements.txt
 
-# Start the development server
+# Create backend/.env from the example
+# PowerShell: Copy-Item .env.example .env
+# bash:       cp .env.example .env
+```
+
+Edit `backend/.env` so it points at the **host-mapped** Docker DB (not hostname `db`):
+
+```env
+DATABASE_URL=postgresql://postgres:<password>@localhost:5432/bread
+JWT_SECRET_KEY=<replace-with-a-long-random-secret>
+JWT_ALGORITHM=HS256
+JWT_EXPIRE_MINUTES=1440
+```
+
+Keep `DATABASE_URL` credentials aligned with `docker/.env` `POSTGRES_*` values.
+
+Start:
+
+```bash
 uvicorn app.main:app --reload
 ```
 
-The backend will be available at:
-
 | URL | Description |
 |-----|-------------|
-| `http://127.0.0.1:8000` | API base URL |
+| `http://127.0.0.1:8000` | API base |
 | `http://127.0.0.1:8000/docs` | Swagger UI |
 
----
-
-## 3. Frontend Setup & Start
+### 3. Frontend (host)
 
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Start the development server
 npm run dev
 ```
 
-The frontend will be available at:
+UI: `http://localhost:5173`
 
-```text
-http://localhost:5173
+Axios defaults to `http://127.0.0.1:8000`. Override with `frontend/.env` if needed:
+
+```env
+VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
-
-> The frontend proxies all API requests to `http://127.0.0.1:8000` by default.  
-> To override, set `VITE_API_BASE_URL` in a `.env` file:
->
-> ```env
-> VITE_API_BASE_URL=http://127.0.0.1:8000
-> ```
-
-### Available Scripts
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Start development server |
+| `npm run dev` | Dev server |
 | `npm run build` | Production build |
-| `npm run lint` | Run ESLint |
-| `npm run preview` | Preview production build locally |
+| `npm run lint` | ESLint |
+| `npm run preview` | Preview production build |
 
 ---
 
-## 4. API Quick Reference
+## Test credentials
 
-Full contract: [`frontend/src/apidoc/Frontend_Backend_API_Contract_Updated_With_Token.md`](frontend/src/apidoc/Frontend_Backend_API_Contract_Updated_With_Token.md)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/v1/auth/login` | User login, returns mock token |
-| `POST` | `/api/v1/submissions` | Submit API spec + metadata for validation |
-| `POST` | `/api/v1/validation/spec` | Validate spec directly (used internally) |
-
-### Sprint 1 Test Credentials
+Seed user in `DB/19.7database.sql`:
 
 ```text
 Email:    publisher@example.com
 Password: password123
 ```
 
+Passwords are stored as **SHA-256 hex** (see backend auth). The seed currently inserts a placeholder hash (`hashed_password_here`). After DB init, fix it once:
+
+```sql
+UPDATE app_user
+SET password_hash = 'ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f'
+WHERE email = 'publisher@example.com';
+```
+
+Or register a new account via the UI / `POST /api/v1/auth/register`.
+
 ---
 
-## 5. Common Issues
+## API quick reference
+
+Full contract: [`frontend/src/apidoc/Frontend_Backend_API_Contract_Updated_With_Token.md`](frontend/src/apidoc/Frontend_Backend_API_Contract_Updated_With_Token.md)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/auth/login` | Login, returns JWT |
+| `POST` | `/api/v1/auth/register` | Register + token |
+| `GET` | `/api/v1/submissions` | List submissions |
+| `POST` | `/api/v1/submissions` | Submit API for validation |
+| `GET` | `/api/v1/submissions/authors` | Author filter list |
+
+---
+
+## Common issues
 
 ### Port 5432 already in use
 
-Map Docker to a different local port:
+Set `POSTGRES_PORT=5433` in `docker/.env`, then for local backend use:
 
-```bash
-docker run --name sprint1-db \
-  -e POSTGRES_PASSWORD=mysecretpassword \
-  -p 5433:5432 \
-  -d postgres
+```env
+DATABASE_URL=postgresql://postgres:<password>@localhost:5433/bread
 ```
 
-Then update the backend database connection to use port `5433`.
+### Frontend cannot reach backend
 
-### Docker container name already exists
+1. Confirm uvicorn is running.
+2. Confirm `VITE_API_BASE_URL` matches the backend URL.
+3. In full Docker mode, open `http://localhost:8080` (not the Vite port).
 
-```bash
-docker start sprint1-db
-# or remove and recreate:
-docker rm sprint1-db
-```
+### Login fails for seed user
 
-### Frontend cannot reach backend (CORS / connection refused)
+Run the `UPDATE app_user ...` statement in the credentials section, or register a new user.
 
-1. Confirm the backend server is running (`uvicorn app.main:app --reload`).
-2. Confirm the virtual environment is activated before running uvicorn.
-3. Check that `VITE_API_BASE_URL` (if set) matches the actual backend URL.
+### Init SQL did not run
+
+Init runs only on a new empty volume. Recreate with `down --volumes` (destructive) if you need a clean schema load.
 
 ### Python version mismatch
-
-The backend requires Python 3.11. Check with:
 
 ```bash
 python --version
 ```
 
-If the version is wrong, recreate the virtual environment using `python3.11 -m venv .venv`.
+Recreate the venv with Python 3.11 if needed: `python3.11 -m venv .venv`.
