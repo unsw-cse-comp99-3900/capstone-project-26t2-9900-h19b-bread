@@ -411,13 +411,18 @@ CREATE TABLE api_schema (
     version_id             INT NOT NULL,               -- ER: always bound to a version
     direction              schema_direction_type NOT NULL,
     format                 schema_payload_format NOT NULL,
+    source_key             TEXT NOT NULL DEFAULT 'default',
+    source_path            TEXT,
+    source_method          TEXT,
+    media_type             TEXT,
+    status_code            TEXT,
     raw_schema             JSONB NOT NULL,
     normalized_schema      JSONB,
     schema_version         INT NOT NULL DEFAULT 1,
     created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT uq_api_schema_dir_ver
-        UNIQUE (api_id, version_id, direction, schema_version),
+    CONSTRAINT uq_api_schema_dir_ver_source
+        UNIQUE (api_id, version_id, direction, schema_version, source_key),
     CONSTRAINT fk_api_schema_api
         FOREIGN KEY (api_id) REFERENCES api_submission (api_id)
         ON DELETE CASCADE,
@@ -528,8 +533,8 @@ CREATE TABLE schema_mapping (
     updated_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT chk_schema_mapping_not_same_api CHECK (source_api_id <> target_api_id),
-    CONSTRAINT uq_schema_mapping_pair_versions
-        UNIQUE (source_api_id, target_api_id, source_version_id, target_version_id),
+    CONSTRAINT uq_schema_mapping_schema_pair
+        UNIQUE (source_schema_id, target_schema_id),
     CONSTRAINT fk_sm_source_api
         FOREIGN KEY (source_api_id) REFERENCES api_submission (api_id)
         ON DELETE CASCADE,
@@ -678,7 +683,14 @@ INSERT INTO enterprise (name, registration_number, website_url, status) VALUES
     ('OZEDI Holdings Pty Ltd', 'ENT-OZEDI', 'https://www.ozedi.com.au', 'ACTIVE');
 
 INSERT INTO app_user (enterprise_id, name, email, password_hash, role, status)
-VALUES (1, 'Demo Publisher', 'publisher@example.com', 'hashed_password_here', 'PUBLISHER', 'ACTIVE');
+VALUES (
+    1,
+    'Demo Publisher',
+    'publisher@example.com',
+    'ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f',
+    'PUBLISHER',
+    'ACTIVE'
+);
 
 -- API #1 history demo
 INSERT INTO api_submission (enterprise_id, submitted_by, api_name, category, is_active, status)
@@ -789,12 +801,17 @@ INSERT INTO auth_metadata (api_id, version_id, auth_method, auth_method_raw, aut
 VALUES (3, 5, 'TOKEN', 'Token', 'JWT token authentication.', TRUE);
 
 -- Layer C sample schemas
-INSERT INTO api_schema (api_id, version_id, direction, format, raw_schema, normalized_schema, schema_version) VALUES
+INSERT INTO api_schema (
+    api_id, version_id, direction, format, source_key, source_path, source_method,
+    media_type, status_code, raw_schema, normalized_schema, schema_version
+) VALUES
 (2, 4, 'INPUT', 'XML',
+ 'sample:input:ozedi-invoice', 'Invoice', NULL, 'XML', NULL,
  '{"root":"Invoice","fields":["ID","IssueDate","PayableAmount"]}'::jsonb,
  '{"fields":[{"path":"Invoice/ID","type":"string","required":true},{"path":"Invoice/IssueDate","type":"date","required":true},{"path":"Invoice/PayableAmount","type":"number","required":true}]}'::jsonb,
  1),
 (3, 5, 'INPUT', 'XML',
+ 'sample:input:peppol-invoice', 'Invoice', NULL, 'XML', NULL,
  '{"root":"Invoice","fields":["ID","IssueDate"]}'::jsonb,
  '{"fields":[{"path":"Invoice/ID","type":"string","required":true},{"path":"Invoice/IssueDate","type":"date","required":true}]}'::jsonb,
  1);
