@@ -4,6 +4,7 @@ from contextlib import AbstractContextManager, contextmanager, nullcontext
 from psycopg import Connection
 
 from app.core.database import get_connection
+from app.services.schema_mapping.spec_schema_extractor import sync_api_schemas_from_spec
 from app.version_history.schemas import VersionWriteRequest
 
 
@@ -268,6 +269,15 @@ class PostgresVersionHistoryRepository:
                 """,
                 (version_id, data.spec_type, f"inline/version_{version_id}.txt", data.specification),
             )
+            sync_api_schemas_from_spec(
+                cursor,
+                api_id=api_id,
+                version_id=version_id,
+                spec_type=data.spec_type,
+                spec_content=data.specification,
+                input_format=data.input_format,
+                output_format=data.output_format,
+            )
             return
         cursor.execute(
             """
@@ -306,3 +316,12 @@ class PostgresVersionHistoryRepository:
                 """,
                 (version_id, data.spec_type, f"inline/version_{version_id}.txt", data.specification),
             )
+        sync_api_schemas_from_spec(
+            cursor,
+            api_id=api_id,
+            version_id=version_id,
+            spec_type=data.spec_type,
+            spec_content=data.specification,
+            input_format=data.input_format,
+            output_format=data.output_format,
+        )

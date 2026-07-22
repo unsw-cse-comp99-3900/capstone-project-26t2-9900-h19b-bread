@@ -17,6 +17,7 @@ from app.schemas.submission_schema import (
 )
 from app.schemas.validation_schema import ValidationRequest
 from app.services.validation_service import validate_specification
+from app.services.schema_mapping.spec_schema_extractor import sync_api_schemas_from_spec
 
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
@@ -315,6 +316,16 @@ def create_submission_records(
                     spec_url,
                     request.spec_content,
                 ),
+            )
+
+            sync_api_schemas_from_spec(
+                cursor,
+                api_id=api_id,
+                version_id=version_id,
+                spec_type=spec_type,
+                spec_content=request.spec_content,
+                input_format=request.input_format,
+                output_format=request.output_format,
             )
 
             cursor.execute(

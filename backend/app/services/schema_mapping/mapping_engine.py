@@ -146,7 +146,7 @@ def build_mapping(comparison_result: Dict[str, Any]) -> SchemaMapping:
             note=issue["message"],
         ))
 
-        if target_path:
+        if target_path and code != "extra_source_field":
             handled_targets.add(target_path)
 
         if issue["kind"] == "blocking":
@@ -182,6 +182,10 @@ def _add_direct_matches(
 
         if key in source_props:
             source_child = source_props[key]
+            if target_child.get("type") == "object" and source_child.get("type") == "object":
+                _add_direct_matches(source_child, target_child, mapping, handled_targets, child_source, child_target)
+                continue
+
             mapping.fields.append(FieldMapping(
                 source_path=child_source,
                 target_path=child_target,
@@ -192,9 +196,6 @@ def _add_direct_matches(
                 note="Exact field and type match.",
             ))
             handled_targets.add(child_target)
-
-            if target_child.get("type") == "object" and source_child.get("type") == "object":
-                _add_direct_matches(source_child, target_child, mapping, handled_targets, child_source, child_target)
 
 def _sort_fields(mapping: SchemaMapping) -> None:
     order = {"direct": 0, "rename": 1, "cast": 2, "wrap_array": 3,

@@ -540,7 +540,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onComplete, editApiId = n
 
     if (current === 1) {
       await form.validateFields();
-      if (!specContent) {
+      if (importMethod === 'upload' && !specContent) {
         message.warning('No spec content available. Please upload a specification file.');
         return;
       }
