@@ -22,6 +22,9 @@ class FakeLifecycleRepository:
         self.version_status = None
         self.events: list[dict] = []
         self.archived_previous = False
+        self.previous_published_version_id = None
+        self.restored_current_version = None
+        self.restored_status = None
         self.validation_run_id = 90
         self.validation_overall_status = ValidationOverallStatus.RUNNING
         self.validation_stage_statuses = {}
@@ -53,6 +56,14 @@ class FakeLifecycleRepository:
 
     def archive_previous_version(self, api_id, current_version_id):
         self.archived_previous = True
+
+    def get_previous_published_version_id(self, api_id, current_version_id):
+        return self.previous_published_version_id
+
+    def restore_api_current_version(self, api_id, version_id, status):
+        self.restored_current_version = version_id
+        self.restored_status = status
+        self.status = status
 
     def create_version_event(
         self,
@@ -169,6 +180,29 @@ def test_any_failed_stage_rejects_immediately() -> None:
     assert repository.events[0]["event_type"] == VersionEventType.VALIDATION_FAILED
 
 
+def test_failed_new_version_restores_previous_published_api() -> None:
+    repository = FakeLifecycleRepository(ApiStatus.VALIDATING)
+    repository.version_id = 22
+    repository.previous_published_version_id = 12
+
+    result = LifecycleService(repository).handle_validation_result(
+        api_id=5,
+        validation_run_id=90,
+        validation_result=ValidationResultInput(
+            passed=False,
+            stage=ValidationStage.DOMAIN_COMPLIANCE_VALIDATION,
+        ),
+    )
+
+    assert result.status == ApiStatus.REJECTED
+    assert result.version_id == 22
+    assert "Previous published version remains active" in result.message
+    assert repository.version_status.value == "REJECTED"
+    assert repository.restored_current_version == 12
+    assert repository.restored_status == ApiStatus.PUBLISHED
+    assert repository.status == ApiStatus.PUBLISHED
+
+
 def test_withdraw_records_archive_event_with_actor() -> None:
     repository = FakeLifecycleRepository(ApiStatus.PUBLISHED)
 
@@ -176,6 +210,17 @@ def test_withdraw_records_archive_event_with_actor() -> None:
 
     assert repository.events[0]["event_type"] == VersionEventType.ARCHIVED
     assert repository.events[0]["actor_user_id"] == 42
+    assert repository.events[0]["to_status"].value == "ARCHIVED"
+
+
+def test_rejected_api_can_be_withdrawn() -> None:
+    repository = FakeLifecycleRepository(ApiStatus.REJECTED)
+
+    result = LifecycleService(repository).withdraw_api(api_id=5, actor_id=42, reason="cleanup")
+
+    assert result.status == ApiStatus.WITHDRAWN
+    assert repository.events[0]["event_type"] == VersionEventType.ARCHIVED
+    assert repository.events[0]["from_status"].value == "REJECTED"
     assert repository.events[0]["to_status"].value == "ARCHIVED"
 
 

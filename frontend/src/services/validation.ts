@@ -6,6 +6,7 @@ export interface ValidationErrorDetail {
   message:   string;
   path?:     string;
   severity:  string;
+  stage?:    string;
 }
 
 export interface ValidationStageResult {

@@ -28,7 +28,7 @@ export interface ValidationResult {
 // ── Domain constants ────────────────────────────────────────────────────────
 
 export const FORMAT_OPTIONS   = ['JSON', 'XML', 'UBL 2.1', 'CSV', 'EDIFACT', 'PDF'] as const;
-export const AUTH_OPTIONS     = ['OAuth 2.0', 'API Key', 'Basic Authentication', 'mTLS'] as const;
+export const AUTH_OPTIONS     = ['OAuth 2.0', 'Bearer / JWT', 'API Key', 'Basic Authentication', 'mTLS'] as const;
 export const CATEGORY_OPTIONS = ['Invoice Creation', 'Validation', 'Transmission', 'Archiving'] as const;
 
 // ── Spec parsers ───────────────────────────────────────────────────────────
@@ -41,10 +41,14 @@ export function parseOpenApiJson(obj: Record<string, unknown>): ParsedInfo {
 
   let authMethod: string | undefined;
   for (const s of Object.values(schemes)) {
-    if (s.type === 'oauth2')    { authMethod = 'OAuth 2.0';                                   break; }
-    if (s.type === 'apiKey')    { authMethod = 'API Key';                                     break; }
-    if (s.type === 'http')      { authMethod = s.scheme === 'basic' ? 'Basic Authentication' : 'mTLS'; break; }
-    if (s.type === 'mutualTLS') { authMethod = 'mTLS';                                        break; }
+    const scheme = String(s.scheme ?? '').toLowerCase();
+    if (s.type === 'oauth2')    { authMethod = 'OAuth 2.0';          break; }
+    if (s.type === 'apiKey')    { authMethod = 'API Key';            break; }
+    if (s.type === 'http') {
+      authMethod = scheme === 'basic' ? 'Basic Authentication' : 'Bearer / JWT';
+      break;
+    }
+    if (s.type === 'mutualTLS') { authMethod = 'mTLS';               break; }
   }
 
   const paths = (obj.paths as Record<string, Record<string, unknown>>) ?? {};

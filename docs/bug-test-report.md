@@ -8,7 +8,7 @@
 - **模块**：API Publisher
 - **相关页面**：My APIs / Update API
 - **优先级**：待评估
-- **状态**：待修复
+- **状态**：已修复，待回归验证
 
 ### 问题描述
 
@@ -58,6 +58,7 @@
 - 需要进一步确认该问题是否只发生在已发布 API，还是所有非 `draft` 状态 API 均会触发。
 - 建议后续确认后端返回的具体错误码和前端展示逻辑是否一致。
 - 建议重点检查更新接口是否在校验失败时错误地覆盖了 API 状态字段。
+- 修复记录：新版本校验失败时，如果存在 previous published version，系统会恢复 `api_submission.current_version_id` 和 `status=PUBLISHED`，只将失败的新版本标记为 `REJECTED`。本次 validation response 仍返回失败，避免前端误提示成功。
 
 ## Bug 002 - 无法删除 Rejected 状态的 API
 
@@ -65,7 +66,7 @@
 - **模块**：API Publisher
 - **相关页面**：My APIs
 - **优先级**：待评估
-- **状态**：待修复
+- **状态**：已修复，待回归验证
 
 ### 问题描述
 
@@ -95,3 +96,47 @@
 
 - 该问题可能与 Bug 001 关联：已发布 API 修改失败后会进入 `Rejected` 状态，而进入该状态后又无法删除，导致用户无法清理异常 API。
 - 建议检查删除接口是否限制了可删除状态，或前端是否对 `Rejected` 状态调用了错误的删除逻辑。
+- 修复记录：生命周期状态机已允许 `REJECTED -> WITHDRAWN`，页面现有删除/撤回按钮可继续调用 withdraw 接口清理 Rejected API。
+
+## Bug 003 - 通过 URL 上传 API 时无法读取 specs 并完成 validate
+
+- **发现日期**：2026-07-22
+- **模块**：API Publisher
+- **相关页面**：Publish New API / Import Spec / Validation
+- **优先级**：待评估
+- **状态**：已修复，待回归验证
+
+### 问题描述
+
+发布 API 时，如果选择通过 URL 上传 API specification，系统无法正确读取 specs，导致后续 validate 失败。
+
+该问题用户反馈可能已经修复，但仍需记录并进行回归验证。
+
+### 复现步骤
+
+1. 进入 `API Publisher` 页面。
+2. 点击 `Publish New API`。
+3. 在导入 specification 的步骤中选择 URL 上传方式。
+4. 输入一个可访问的 API specification URL。
+5. 进入后续校验流程。
+
+### 实际结果
+
+系统无法读取通过 URL 提供的 specs，导致 validate 无法完成。
+
+### 期望结果
+
+系统应能从有效 URL 正确拉取并解析 API specification，并使用该 specification 完成后续校验流程。
+
+如果 URL 无法访问、格式不支持或内容不是有效 specification，应显示明确错误原因。
+
+### 截图
+
+待补充。
+
+### 备注
+
+- 该问题可能已修复，需要使用有效的 OpenAPI/Swagger URL 重新验证。
+- 建议同时测试文件上传和 URL 上传两种方式，确认二者进入 validate 阶段时使用的是同一套 specs 解析逻辑。
+- 建议检查 URL 获取失败、跨域、后端下载失败、内容类型不匹配等情况是否有清晰错误提示。
+- 修复记录：URL 模式不再依赖浏览器端 fetch 成功才允许提交，后端会从 URL 拉取 spec；schema extractor 已增强 Swagger/OpenAPI 2.0、`allOf`、`http bearer`、Schematron validation file API 等场景。已用 `https://edi-services.ebxcloud.com/ess-schematron/v3/api-docs/full` 回归通过。

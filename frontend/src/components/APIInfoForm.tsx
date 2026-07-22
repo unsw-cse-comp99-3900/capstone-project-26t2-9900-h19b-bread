@@ -85,32 +85,42 @@ const STEP_ITEMS = [
 function mapBackendValidation(v: ValidationApiResponse): ValidationResult {
   const passed    = v.overall_status === 'pass';
   const specStage = v.stages.find(s => s.stage === 'specification_validation');
+  const domainStage = v.stages.find(s => s.stage === 'domain_compliance_validation');
+  const securityStage = v.stages.find(s => s.stage === 'security_validation');
   const specPassed = specStage ? specStage.status === 'pass' : passed;
-  const mainError  = v.errors[0]?.message ?? 'Validation failed.';
+  const domainPassed = domainStage ? domainStage.status === 'pass' : passed;
+  const securityPassed = securityStage ? securityStage.status === 'pass' : passed;
+  const specError = v.errors.find(e => e.stage === 'specification_validation')?.message
+    ?? v.errors[0]?.message
+    ?? 'Validation failed.';
+  const domainError = v.errors.find(e => e.stage === 'domain_compliance_validation')?.message
+    ?? 'Domain compliance check failed.';
+  const securityError = v.errors.find(e => e.stage === 'security_validation')?.message
+    ?? 'Security metadata validation failed.';
 
   return {
     specValidation: {
       passed:  specPassed,
       message: specPassed
         ? 'OpenAPI / WSDL document is syntactically and structurally correct.'
-        : mainError,
+        : specError,
     },
     domainCompliance: {
-      passed:   passed,
+      passed:   domainPassed,
       skipped:  !specPassed,
-      message:  passed
+      message:  domainPassed
         ? 'API operations are consistent with e-invoicing standards (UBL 2.1 / PEPPOL BIS 3.0).'
         : specPassed
-          ? 'Domain compliance check failed.'
+          ? domainError
           : 'Not evaluated — preceding stage failed.',
     },
     securityMetadata: {
-      passed:   passed,
+      passed:   securityPassed,
       skipped:  !specPassed,
-      message:  passed
+      message:  securityPassed
         ? 'Authentication scheme is present and fully described.'
         : specPassed
-          ? 'Security metadata validation failed.'
+          ? securityError
           : 'Not evaluated — preceding stage failed.',
     },
   };

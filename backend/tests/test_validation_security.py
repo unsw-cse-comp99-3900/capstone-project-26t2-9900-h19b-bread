@@ -80,7 +80,7 @@ def test_auth_method_missing_fails():
 
 
 def test_auth_method_unsupported_fails():
-    status, errors = _security(_valid_oauth2_spec(), auth_method="JWT")
+    status, errors = _security(_valid_oauth2_spec(), auth_method="Digest")
     assert status == ValidationStatus.FAIL
     assert "SECURITY_AUTH_METHOD_UNSUPPORTED" in _codes(errors)
 
@@ -137,6 +137,26 @@ def test_basic_auth_http_scheme_matches():
         root_security=[{"BasicAuth": []}],
     )
     status, errors = _security(spec, auth_method="Basic")
+    assert status == ValidationStatus.PASS
+    assert _codes(errors) == []
+
+
+def test_bearer_http_scheme_matches_bearer_metadata():
+    spec = _spec(
+        schemes={"BearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}},
+        root_security=[{"BearerAuth": []}],
+    )
+    status, errors = _security(spec, auth_method="Bearer")
+    assert status == ValidationStatus.PASS
+    assert _codes(errors) == []
+
+
+def test_bearer_http_scheme_matches_jwt_alias():
+    spec = _spec(
+        schemes={"BearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}},
+        root_security=[{"BearerAuth": []}],
+    )
+    status, errors = _security(spec, auth_method="JWT")
     assert status == ValidationStatus.PASS
     assert _codes(errors) == []
 

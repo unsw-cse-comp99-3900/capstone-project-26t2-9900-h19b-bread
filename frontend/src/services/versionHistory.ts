@@ -177,6 +177,7 @@ export async function getVersionSpecification(
 
 const AUTH_TO_BACKEND: Record<string, AuthMethodType> = {
   'OAuth 2.0':            'OAUTH2',
+  'Bearer / JWT':         'BEARER',
   'API Key':              'API_KEY',
   'Basic Authentication': 'BASIC',
   mTLS:                   'MTLS',
@@ -194,8 +195,8 @@ const AUTH_FROM_BACKEND: Record<string, string> = {
   OAUTH2: 'OAuth 2.0',
   API_KEY: 'API Key',
   BASIC:  'Basic Authentication',
-  TOKEN:  'API Key',
-  BEARER: 'OAuth 2.0',
+  TOKEN:  'Bearer / JWT',
+  BEARER: 'Bearer / JWT',
   MTLS:   'mTLS',
   NONE:   'API Key',
   OTHER:  'API Key',
