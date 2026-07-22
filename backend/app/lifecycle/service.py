@@ -212,7 +212,7 @@ class LifecycleService:
                 api_id,
                 version_id,
                 VersionEventType.ARCHIVED,
-                ApiVersionStatus.PUBLISHED,
+                self._to_version_status(current_status),
                 ApiVersionStatus.ARCHIVED,
                 actor_id,
                 reason,
