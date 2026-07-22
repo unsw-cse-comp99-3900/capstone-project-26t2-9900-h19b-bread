@@ -181,6 +181,55 @@ class PostgresLifecycleRepository:
                     (api_id, current_version_id),
                 )
 
+    def get_previous_published_version_id(
+        self,
+        api_id: int,
+        current_version_id: int,
+    ) -> int | None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT version_id
+                    FROM api_version
+                    WHERE api_id = %s
+                      AND version_id <> %s
+                      AND status = 'PUBLISHED'
+                    ORDER BY published_at DESC NULLS LAST, version_id DESC
+                    LIMIT 1
+                    """,
+                    (api_id, current_version_id),
+                )
+                row = cursor.fetchone()
+        return None if row is None else row["version_id"]
+
+    def restore_api_current_version(
+        self,
+        api_id: int,
+        version_id: int,
+        status: ApiStatus,
+    ) -> None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE api_version
+                    SET is_current = (version_id = %s)
+                    WHERE api_id = %s
+                    """,
+                    (version_id, api_id),
+                )
+                cursor.execute(
+                    """
+                    UPDATE api_submission
+                    SET current_version_id = %s,
+                        status = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE api_id = %s
+                    """,
+                    (version_id, status.value, api_id),
+                )
+
     def create_version_event(
         self,
         api_id: int,
