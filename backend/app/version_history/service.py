@@ -60,6 +60,11 @@ class VersionHistoryService:
                 current = self.repository.get_version(api_id, previous_id)
                 if current is not None and str(current["status"]) in {"DRAFT", "VALIDATING"}:
                     raise VersionConflictError("Finish or discard the current draft before creating a new version.")
+            existing_versions, _total = self.repository.list_versions(api_id, 100, 0)
+            if any(str(version["version_number"]) == data.version_number for version in existing_versions):
+                raise VersionConflictError(
+                    f"Version number '{data.version_number}' already exists. Use a new version number."
+                )
             version_id = self.repository.create_version(
                 api_id, current_user["user_id"], previous_id, data
             )
