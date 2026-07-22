@@ -41,6 +41,13 @@ class LifecycleRepository(Protocol):
     def get_current_version_id(self, api_id: int) -> int | None:
         """Return the active/latest api_version.version_id for the API."""
 
+    def get_validation_context(
+        self,
+        api_id: int,
+        version_id: int,
+    ) -> dict | None:
+        """Return saved spec and metadata needed to validate one API version."""
+
     def update_version_status(
         self,
         version_id: int,
@@ -50,6 +57,21 @@ class LifecycleRepository(Protocol):
 
     def archive_previous_version(self, api_id: int, current_version_id: int) -> None:
         """Archive the previous published version in the cloud version chain."""
+
+    def get_previous_published_version_id(
+        self,
+        api_id: int,
+        current_version_id: int,
+    ) -> int | None:
+        """Return the latest published version before the current candidate."""
+
+    def restore_api_current_version(
+        self,
+        api_id: int,
+        version_id: int,
+        status: ApiStatus,
+    ) -> None:
+        """Restore api_submission to an existing current version and status."""
 
     def create_version_event(
         self,

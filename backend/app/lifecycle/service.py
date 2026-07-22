@@ -134,11 +134,27 @@ class LifecycleService:
             )
             if target_status == ApiStatus.PUBLISHED:
                 self.repository.archive_previous_version(api_id, version_id)
-            self.repository.update_api_status(api_id, target_status)
             self.repository.update_version_status(
                 version_id,
                 self._to_version_status(target_status),
             )
+            restored_status: ApiStatus | None = None
+            if target_status == ApiStatus.REJECTED:
+                previous_published_id = self.repository.get_previous_published_version_id(
+                    api_id,
+                    version_id,
+                )
+                if previous_published_id is not None:
+                    self.repository.restore_api_current_version(
+                        api_id,
+                        previous_published_id,
+                        ApiStatus.PUBLISHED,
+                    )
+                    restored_status = ApiStatus.PUBLISHED
+                else:
+                    self.repository.update_api_status(api_id, target_status)
+            else:
+                self.repository.update_api_status(api_id, target_status)
             self.repository.create_version_event(
                 api_id,
                 version_id,
@@ -161,7 +177,11 @@ class LifecycleService:
             message=(
                 "Validation passed. API published successfully."
                 if validation_result.passed
-                else "Validation failed. API rejected."
+                else (
+                    "Validation failed. Previous published version remains active."
+                    if restored_status == ApiStatus.PUBLISHED
+                    else "Validation failed. API rejected."
+                )
             ),
             version_id=version_id,
             validation_run_id=active_run_id,
@@ -192,7 +212,7 @@ class LifecycleService:
                 api_id,
                 version_id,
                 VersionEventType.ARCHIVED,
-                ApiVersionStatus.PUBLISHED,
+                self._to_version_status(current_status),
                 ApiVersionStatus.ARCHIVED,
                 actor_id,
                 reason,
@@ -219,6 +239,12 @@ class LifecycleService:
             message="API status loaded successfully.",
             updated_at=updated_at,
         )
+
+    def get_validation_context(self, api_id: int, version_id: int) -> dict:
+        context = self.repository.get_validation_context(api_id, version_id)
+        if context is None:
+            raise CurrentVersionNotFoundError(api_id)
+        return context
 
     def _get_required_status(self, api_id: int) -> ApiStatus:
         status = self.repository.get_api_status(api_id)
