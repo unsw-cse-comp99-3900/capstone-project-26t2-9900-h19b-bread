@@ -41,6 +41,13 @@ class LifecycleRepository(Protocol):
     def get_current_version_id(self, api_id: int) -> int | None:
         """Return the active/latest api_version.version_id for the API."""
 
+    def get_validation_context(
+        self,
+        api_id: int,
+        version_id: int,
+    ) -> dict | None:
+        """Return saved spec and metadata needed to validate one API version."""
+
     def update_version_status(
         self,
         version_id: int,

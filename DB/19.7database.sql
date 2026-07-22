@@ -683,7 +683,14 @@ INSERT INTO enterprise (name, registration_number, website_url, status) VALUES
     ('OZEDI Holdings Pty Ltd', 'ENT-OZEDI', 'https://www.ozedi.com.au', 'ACTIVE');
 
 INSERT INTO app_user (enterprise_id, name, email, password_hash, role, status)
-VALUES (1, 'Demo Publisher', 'publisher@example.com', 'hashed_password_here', 'PUBLISHER', 'ACTIVE');
+VALUES (
+    1,
+    'Demo Publisher',
+    'publisher@example.com',
+    'ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f',
+    'PUBLISHER',
+    'ACTIVE'
+);
 
 -- API #1 history demo
 INSERT INTO api_submission (enterprise_id, submitted_by, api_name, category, is_active, status)

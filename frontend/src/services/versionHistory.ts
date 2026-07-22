@@ -267,3 +267,25 @@ export function bumpVersionNumber(current: string): string {
   const minor = match[3] != null ? Number(match[3]) + 1 : 1;
   return `${prefix}${major}.${minor}`;
 }
+
+export function nextVersionNumber(versions: VersionSummary[]): string {
+  let best: { prefix: string; major: number; minor: number } | null = null;
+  for (const version of versions) {
+    const match = version.version_number.trim().match(/^(v?)(\d+)(?:\.(\d+))?$/i);
+    if (!match) continue;
+    const candidate = {
+      prefix: match[1] ?? '',
+      major: Number(match[2]),
+      minor: match[3] != null ? Number(match[3]) : 0,
+    };
+    if (
+      best == null
+      || candidate.major > best.major
+      || (candidate.major === best.major && candidate.minor > best.minor)
+    ) {
+      best = candidate;
+    }
+  }
+  if (best == null) return 'v1.0';
+  return `${best.prefix}${best.major}.${best.minor + 1}`;
+}

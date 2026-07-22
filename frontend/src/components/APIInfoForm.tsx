@@ -48,6 +48,7 @@ import {
   getVersionDetail,
   getVersions,
   getVersionSpecification,
+  nextVersionNumber,
   toBackendAuth,
   toBackendCategory,
   updateVersion,
@@ -295,7 +296,9 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onComplete, editApiId = n
         setEditCtx({
           apiId:         editApiId,
           versionId:     currentVersion.version_id,
-          versionNumber: currentVersion.version_number,
+          versionNumber: status === 'DRAFT'
+            ? currentVersion.version_number
+            : nextVersionNumber(versions.items),
           versionStatus: status,
         });
 
@@ -310,7 +313,7 @@ const APIInfoForm: React.FC<Props> = ({ open, onClose, onComplete, editApiId = n
           description:   detail.description || undefined,
           versionNumber: status === 'DRAFT'
             ? detail.version_number
-            : bumpVersionNumber(detail.version_number),
+            : nextVersionNumber(versions.items),
           changeNote:    '',
         });
         setCurrent(1);

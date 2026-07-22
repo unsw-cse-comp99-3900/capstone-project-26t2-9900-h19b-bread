@@ -8,10 +8,19 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 
+from app.core.database import get_connection
+
 BACKEND_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 load_dotenv(BACKEND_ENV_PATH)
 
 security = HTTPBearer()
+
+
+def _unauthorized(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+    )
 
 
 def create_access_token(
@@ -60,23 +69,46 @@ def get_current_user(
         enterprise_id = payload.get("enterprise_id")
 
         if not user_id or not email or not role or not enterprise_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload.",
-            )
+            raise _unauthorized("Invalid token payload.")
+
+        try:
+            user_id_int = int(user_id)
+            enterprise_id_int = int(enterprise_id)
+        except (TypeError, ValueError):
+            raise _unauthorized("Invalid token payload.")
+
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT user_id, email, role, enterprise_id, status
+                    FROM app_user
+                    WHERE user_id = %s
+                    """,
+                    (user_id_int,),
+                )
+                user = cursor.fetchone()
+
+        if user is None:
+            raise _unauthorized("User session is no longer valid. Please sign in again.")
+
+        if user["status"] != "ACTIVE":
+            raise _unauthorized("User account is not active.")
+
+        if (
+            normalize_email := str(user["email"]).lower()
+        ) != str(email).lower() or str(user["role"]) != str(role) or int(user["enterprise_id"]) != enterprise_id_int:
+            raise _unauthorized("User session is stale. Please sign in again.")
 
         return {
-            "user_id": int(user_id),
-            "email": email,
-            "role": role,
-            "enterprise_id": int(enterprise_id),
+            "user_id": user_id_int,
+            "email": normalize_email,
+            "role": user["role"],
+            "enterprise_id": enterprise_id_int,
         }
 
     except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token.",
-        )
+        raise _unauthorized("Invalid or expired token.")
 
 
 def require_role(*allowed_roles: str):

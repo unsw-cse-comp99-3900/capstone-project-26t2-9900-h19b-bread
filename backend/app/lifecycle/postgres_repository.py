@@ -140,6 +140,42 @@ class PostgresLifecycleRepository:
             return None
         return row["version_id"]
 
+    def get_validation_context(
+        self,
+        api_id: int,
+        version_id: int,
+    ) -> dict | None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        version.protocol_type,
+                        version.endpoint_url,
+                        version.input_format,
+                        version.output_format,
+                        version.capability_category,
+                        auth.auth_method,
+                        specification.raw_content AS spec_content
+                    FROM api_version version
+                    LEFT JOIN LATERAL (
+                        SELECT auth_method
+                        FROM auth_metadata
+                        WHERE api_id = version.api_id
+                          AND version_id = version.version_id
+                        ORDER BY auth_id DESC
+                        LIMIT 1
+                    ) auth ON TRUE
+                    LEFT JOIN api_specification specification
+                      ON specification.version_id = version.version_id
+                    WHERE version.api_id = %s
+                      AND version.version_id = %s
+                    """,
+                    (api_id, version_id),
+                )
+                row = cursor.fetchone()
+        return None if row is None else dict(row)
+
     def update_version_status(
         self,
         version_id: int,
