@@ -536,6 +536,19 @@ _DOMAIN_STANDARD_MARKERS = (
     "bis billing",
 )
 
+_DOMAIN_VALIDATION_MARKERS = (
+    "schematron",
+    "validate",
+    "validation",
+    "validator",
+)
+_DOMAIN_FILE_PAYLOAD_MARKERS = (
+    "file",
+    "filename",
+    "content",
+    "checksum",
+    "xmlfile",
+)
 
 def _normalize_field_name(name: str) -> str:
     """Lowercase and strip separators / XML namespace prefixes for matching."""
@@ -586,6 +599,27 @@ def _collect_property_names(
             _collect_property_names(entry, names, depth + 1)
 
 
+def _collect_domain_text(
+    node: object,
+    parts: list,
+    depth: int = 0,
+) -> None:
+    """Collect descriptive OpenAPI text that can carry domain standards."""
+    if depth > 40 or node is None:
+        return
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in {"title", "description", "summary", "operationId", "name", "default"}:
+                parts.append(str(value))
+            elif key == "enum" and isinstance(value, list):
+                parts.extend(str(item) for item in value)
+            elif key not in _SCHEMA_SKIP_KEYS:
+                _collect_domain_text(value, parts, depth + 1)
+    elif isinstance(node, list):
+        for entry in node:
+            _collect_domain_text(entry, parts, depth + 1)
+
+
 def _extract_rest_domain_signals(parsed_spec: dict) -> Tuple[str, set]:
     """
     Extract FR-5 domain signals from a parsed OpenAPI document.
@@ -624,13 +658,16 @@ def _extract_rest_domain_signals(parsed_spec: dict) -> Tuple[str, set]:
                 if isinstance(operation, dict):
                     haystack_parts.append(str(operation.get("operationId") or ""))
                     haystack_parts.append(str(operation.get("summary") or ""))
-
+                    _collect_domain_text(operation.get("parameters"), haystack_parts)
+                    _collect_domain_text(operation.get("requestBody"), haystack_parts)
+                    _collect_domain_text(operation.get("responses"), haystack_parts)
+    components = parsed_spec.get("components") or {}
+    _collect_domain_text(components.get("schemas"), haystack_parts)
     haystack = " ".join(haystack_parts).lower()
 
     # --- Signal 2: schema property names -> core invoice field categories ---
     # Collect from both reusable components.schemas AND inline request/response
     # schemas declared under paths, so specs that inline their models are covered.
-    components = parsed_spec.get("components") or {}
     field_names: set = set()
     _collect_property_names(components.get("schemas"), field_names)
     _collect_property_names(parsed_spec.get("paths"), field_names)
@@ -679,6 +716,11 @@ def _evaluate_domain_signals(
 
     standard_matched = any(marker in haystack for marker in _DOMAIN_STANDARD_MARKERS)
     standard_score = 2 if standard_matched else 0
+    validation_service_matched = (
+        standard_matched
+        and any(marker in haystack for marker in _DOMAIN_VALIDATION_MARKERS)
+        and any(marker in field for marker in _DOMAIN_FILE_PAYLOAD_MARKERS for field in normalized_fields)
+    )
 
     keyword_hits = sum(1 for keyword in _DOMAIN_KEYWORDS if keyword in haystack)
     keyword_score = min(keyword_hits, 2)
@@ -687,9 +729,11 @@ def _evaluate_domain_signals(
 
     # Hard gate: keyword-only evidence can never pass. Passing requires at least
     # one structural invoice field OR an explicit e-invoicing standard reference.
-    eligible_to_pass = strong_score >= 1 or standard_matched
+    eligible_to_pass = strong_score >= 1 or standard_matched or validation_service_matched
 
-    if eligible_to_pass and score >= 4:
+    if validation_service_matched:
+        pass  # e-invoicing validation tools often accept XML/file payloads, not expanded invoice fields.
+    elif eligible_to_pass and score >= 4:
         pass  # strong evidence; no domain-signal error to add
     elif eligible_to_pass and score >= 2:
         # Plausible but weak: surface a warning for FR-7 (non-blocking).
@@ -899,15 +943,19 @@ def _run_security_stage(
     stage = ValidationStage.SECURITY_VALIDATION
 
     # Rule 1: Forms must have legal auth_method.
-    allowed = {"OAUTH2", "API_KEY", "BASIC", "MTLS"}
+    allowed = {"OAUTH2", "API_KEY", "BASIC", "MTLS", "TOKEN", "BEARER"}
 
     raw_auth = (request.auth_method or "").strip().upper()
     normalized_auth = (
         raw_auth.replace(" ", "_")
         .replace("-", "_")
+        .replace("/", "_")
         .replace("OAUTH_2.0", "OAUTH2")
         .replace("OAUTH2.0", "OAUTH2")
     )
+
+    if normalized_auth in {"JWT", "BEARER_JWT"}:
+        normalized_auth = "BEARER"
 
     if not normalized_auth:
         errors.append(
@@ -924,7 +972,7 @@ def _run_security_stage(
                 code="SECURITY_AUTH_METHOD_UNSUPPORTED",
                 message=(
                     f"Authentication method '{request.auth_method}' is not accepted. "
-                    f"Allowed: OAuth2, API Key, Basic, mTLS."
+                    f"Allowed: OAuth2, Bearer/JWT, API Key, Basic, mTLS."
                 ),
                 path="auth_method",
                 stage=stage,
@@ -975,9 +1023,13 @@ def _run_security_stage(
                         http_scheme = (scheme_body.get("scheme") or "").strip().lower()
                         if http_scheme == "basic":
                             mapped = "BASIC"
+                        elif http_scheme == "bearer":
+                            mapped = "BEARER"
 
                     if mapped:
                         scheme_auths.add(mapped)
+                        if mapped == "BEARER":
+                            scheme_auths.add("TOKEN")
 
                 if normalized_auth and normalized_auth in allowed:
                     if normalized_auth not in scheme_auths:
