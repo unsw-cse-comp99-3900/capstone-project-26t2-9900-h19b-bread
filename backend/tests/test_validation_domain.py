@@ -125,6 +125,50 @@ def test_strong_zero_but_standard_reference_passes_with_warning():
     assert "DOMAIN_INSUFFICIENT_SIGNALS" in _codes(errors)
 
 
+def test_schematron_validation_file_api_passes():
+    """E-invoicing validation tools may accept XML file payloads instead of invoice fields."""
+    spec = {
+        "openapi": "3.0.3",
+        "info": {
+            "title": "E-Invoicing Schematron Validation API",
+            "version": "1.0.0",
+            "description": "Validate PEPPOL BIS Billing 3.0, UBL 2.1 and EN 16931 invoices.",
+        },
+        "paths": {
+            "/v1/api/validate": {
+                "post": {
+                    "operationId": "validate",
+                    "summary": "Validate an e-invoice XML file using Schematron",
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/FileDto"}
+                            }
+                        }
+                    },
+                    "responses": {"200": {"description": "Validation result"}},
+                }
+            }
+        },
+        "components": {
+            "schemas": {
+                "FileDto": {
+                    "type": "object",
+                    "properties": {
+                        "filename": {"type": "string"},
+                        "content": {"type": "string", "description": "Base64 XML content"},
+                        "checksum": {"type": "string"},
+                    },
+                }
+            }
+        },
+    }
+
+    status, errors = _domain(spec)
+    assert status == ValidationStatus.PASS
+    assert _codes(errors) == []
+
+
 # --------------------------------------------------------------------------- #
 # Domain stage: FAIL cases
 # --------------------------------------------------------------------------- #
