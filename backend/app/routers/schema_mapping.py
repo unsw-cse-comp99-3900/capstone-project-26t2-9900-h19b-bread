@@ -3,6 +3,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from app.schemas.schema_mapping_schema import (
+    ApiSchemaCompareRequest,
+    ApiSchemaCompareResponse,
+    ApiSchemaSummary,
+    ApiSchemaTransformPreviewRequest,
+    ApiSchemaTransformPreviewResponse,
     InferJsonSchemaRequest,
     InferXmlSchemaRequest,
     MatrixRequest,
@@ -18,8 +23,11 @@ from app.services.schema_mapping.service import (
     SchemaMappingError,
     build_compatibility_matrix,
     compare_schema_pair,
+    compare_database_api_schemas,
     infer_json_schema_from_sample,
     infer_xml_schema_from_sample,
+    list_database_api_schemas,
+    transform_database_mapping_preview,
     transform_preview,
 )
 
@@ -42,6 +50,51 @@ def compare_schemas_endpoint(request: SchemaCompareRequest) -> dict[str, Any]:
             target_schema=request.target_schema,
             source_name=request.source_name,
             target_name=request.target_name,
+        )
+    except SchemaMappingError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.get(
+    "/api-schemas",
+    response_model=list[ApiSchemaSummary],
+    responses={400: {"model": SchemaMappingErrorResponse}},
+)
+def list_api_schemas_endpoint() -> list[dict[str, Any]]:
+    try:
+        return list_database_api_schemas()
+    except SchemaMappingError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.post(
+    "/compare-api-schemas",
+    response_model=ApiSchemaCompareResponse,
+    responses={400: {"model": SchemaMappingErrorResponse}},
+)
+def compare_api_schemas_endpoint(request: ApiSchemaCompareRequest) -> dict[str, Any]:
+    try:
+        return compare_database_api_schemas(
+            source_schema_id=request.source_schema_id,
+            target_schema_id=request.target_schema_id,
+            save_mapping=request.save_mapping,
+        )
+    except SchemaMappingError as exc:
+        raise _bad_request(exc) from exc
+
+
+@router.post(
+    "/transform-api-preview",
+    response_model=ApiSchemaTransformPreviewResponse,
+    responses={400: {"model": SchemaMappingErrorResponse}},
+)
+def transform_api_preview_endpoint(request: ApiSchemaTransformPreviewRequest) -> dict[str, Any]:
+    try:
+        return transform_database_mapping_preview(
+            mapping_id=request.mapping_id,
+            data=request.data,
+            output_format=request.format,
+            save_run=request.save_run,
         )
     except SchemaMappingError as exc:
         raise _bad_request(exc) from exc
