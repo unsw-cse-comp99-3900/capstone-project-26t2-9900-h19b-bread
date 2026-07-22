@@ -533,8 +533,8 @@ CREATE TABLE schema_mapping (
     updated_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT chk_schema_mapping_not_same_api CHECK (source_api_id <> target_api_id),
-    CONSTRAINT uq_schema_mapping_pair_versions
-        UNIQUE (source_api_id, target_api_id, source_version_id, target_version_id),
+    CONSTRAINT uq_schema_mapping_schema_pair
+        UNIQUE (source_schema_id, target_schema_id),
     CONSTRAINT fk_sm_source_api
         FOREIGN KEY (source_api_id) REFERENCES api_submission (api_id)
         ON DELETE CASCADE,

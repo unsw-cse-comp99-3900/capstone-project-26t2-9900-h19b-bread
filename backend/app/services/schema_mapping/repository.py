@@ -184,8 +184,12 @@ class PostgresSchemaMappingRepository:
                         source_schema_format, target_schema_format,
                         overview_note, lifecycle_status, completeness
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'ACTIVE', %s)
-                    ON CONFLICT (source_api_id, target_api_id, source_version_id, target_version_id)
+                    ON CONFLICT (source_schema_id, target_schema_id)
                     DO UPDATE SET
+                        source_api_id = EXCLUDED.source_api_id,
+                        target_api_id = EXCLUDED.target_api_id,
+                        source_version_id = EXCLUDED.source_version_id,
+                        target_version_id = EXCLUDED.target_version_id,
                         source_schema_id = EXCLUDED.source_schema_id,
                         target_schema_id = EXCLUDED.target_schema_id,
                         compatibility_result_id = EXCLUDED.compatibility_result_id,
