@@ -153,10 +153,16 @@ const SchemaMappingPage: React.FC = () => {
   }, [dbComparison]);
 
   const schemaOptions = useMemo(
-    () => apiSchemas.map(schema => ({
-      value: schema.schema_id,
-      label: `${schema.api_name} · ${schema.direction} ${schema.format} · ${schema.version_number} (#${schema.schema_id})`,
-    })),
+    () => apiSchemas.map(schema => {
+      const operation = [schema.source_method, schema.source_path].filter(Boolean).join(' ');
+      const response = schema.status_code ? ` ${schema.status_code}` : '';
+      const source = operation || schema.source_path || schema.source_key;
+      const media = schema.media_type || schema.format;
+      return {
+        value: schema.schema_id,
+        label: `${schema.api_name} · ${schema.direction}${response} ${media} · ${source} · ${schema.version_number} (#${schema.schema_id})`,
+      };
+    }),
     [apiSchemas],
   );
 

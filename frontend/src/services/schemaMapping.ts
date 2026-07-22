@@ -36,6 +36,11 @@ export interface ApiSchemaSummary {
   version_number:     string;
   direction:          string;
   format:             string;
+  source_key:         string;
+  source_path:        string | null;
+  source_method:      string | null;
+  media_type:         string | null;
+  status_code:        string | null;
   schema_version:     number;
   created_at:         string;
   schema_definition:  Record<string, unknown>;

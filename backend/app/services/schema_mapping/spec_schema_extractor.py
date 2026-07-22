@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import xml.etree.ElementTree as ET
 from copy import deepcopy
 from typing import Any
@@ -11,6 +12,7 @@ from app.services.schema_mapping.compatibility_engine import normalize_schema
 
 HTTP_METHODS = {"get", "put", "post", "delete", "patch", "options", "head", "trace"}
 XSD_NS = "{http://www.w3.org/2001/XMLSchema}"
+logger = logging.getLogger(__name__)
 
 
 def sync_api_schemas_from_spec(
@@ -34,6 +36,12 @@ def sync_api_schemas_from_spec(
             output_format=output_format,
         )
     except Exception:
+        logger.exception(
+            "Failed to extract schema mapping payloads for api_id=%s version_id=%s spec_type=%s",
+            api_id,
+            version_id,
+            spec_type,
+        )
         return
 
     for extracted in extracted_schemas:
@@ -42,12 +50,17 @@ def sync_api_schemas_from_spec(
         cursor.execute(
             """
             INSERT INTO api_schema (
-                api_id, version_id, direction, format,
+                api_id, version_id, direction, format, source_key,
+                source_path, source_method, media_type, status_code,
                 raw_schema, normalized_schema, schema_version
-            ) VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, 1)
-            ON CONFLICT (api_id, version_id, direction, schema_version)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, 1)
+            ON CONFLICT (api_id, version_id, direction, schema_version, source_key)
             DO UPDATE SET
                 format = EXCLUDED.format,
+                source_path = EXCLUDED.source_path,
+                source_method = EXCLUDED.source_method,
+                media_type = EXCLUDED.media_type,
+                status_code = EXCLUDED.status_code,
                 raw_schema = EXCLUDED.raw_schema,
                 normalized_schema = EXCLUDED.normalized_schema,
                 created_at = CURRENT_TIMESTAMP
@@ -58,6 +71,11 @@ def sync_api_schemas_from_spec(
                 version_id,
                 extracted["direction"],
                 extracted["format"],
+                extracted["source_key"],
+                extracted.get("source_path"),
+                extracted.get("source_method"),
+                extracted.get("media_type"),
+                extracted.get("status_code"),
                 Jsonb(raw_schema),
                 Jsonb(normalized_schema),
             ),
@@ -143,23 +161,23 @@ def _extract_openapi_payload_schemas(
 ) -> list[dict[str, Any]]:
     spec = _parse_json_or_yaml(spec_content)
     schemas: list[dict[str, Any]] = []
-    input_schema = _first_openapi_request_schema(spec)
-    output_schema = _first_openapi_response_schema(spec)
-    if input_schema is not None:
+    for payload in _openapi_request_payloads(spec):
         schemas.append(
-            {
-                "direction": "INPUT",
-                "format": _payload_format(input_format, default="JSON"),
-                "schema": _resolve_schema(input_schema, spec),
-            }
+            _extracted_openapi_schema(
+                payload,
+                direction="INPUT",
+                payload_format=_payload_format(input_format, default="JSON"),
+                spec=spec,
+            )
         )
-    if output_schema is not None:
+    for payload in _openapi_response_payloads(spec):
         schemas.append(
-            {
-                "direction": "OUTPUT",
-                "format": _payload_format(output_format, default="JSON"),
-                "schema": _resolve_schema(output_schema, spec),
-            }
+            _extracted_openapi_schema(
+                payload,
+                direction="OUTPUT",
+                payload_format=_payload_format(output_format, default="JSON"),
+                spec=spec,
+            )
         )
     return schemas
 
@@ -180,6 +198,11 @@ def _extract_wsdl_payload_schemas(
             {
                 "direction": "INPUT",
                 "format": _payload_format(input_format, default="XML"),
+                "source_key": "wsdl:input",
+                "source_path": "request",
+                "source_method": None,
+                "media_type": _payload_format(input_format, default="XML"),
+                "status_code": None,
                 "schema": input_schema,
             }
         )
@@ -188,6 +211,11 @@ def _extract_wsdl_payload_schemas(
             {
                 "direction": "OUTPUT",
                 "format": _payload_format(output_format, default="XML"),
+                "source_key": "wsdl:output",
+                "source_path": "response",
+                "source_method": None,
+                "media_type": _payload_format(output_format, default="XML"),
+                "status_code": None,
                 "schema": output_schema,
             }
         )
@@ -200,33 +228,70 @@ def _parse_json_or_yaml(content: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _first_openapi_request_schema(spec: dict[str, Any]) -> dict[str, Any] | None:
-    for operation in _openapi_operations(spec):
+def _openapi_request_payloads(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for operation_ref in _openapi_operations(spec):
+        path = operation_ref["path"]
+        method = operation_ref["method"]
+        operation = operation_ref["operation"]
         request_body = operation.get("requestBody")
         if isinstance(request_body, dict):
-            schema = _schema_from_content(request_body.get("content"))
-            if schema is not None:
-                return schema
+            for content_schema in _schemas_from_content(request_body.get("content")):
+                payloads.append(
+                    {
+                        "path": path,
+                        "method": method,
+                        "media_type": content_schema["media_type"],
+                        "schema": content_schema["schema"],
+                    }
+                )
         schema = _schema_from_swagger_parameters(operation.get("parameters"))
         if schema is not None:
-            return schema
-    return None
+            payloads.append(
+                {
+                    "path": path,
+                    "method": method,
+                    "media_type": "parameters",
+                    "schema": schema,
+                }
+            )
+    return payloads
 
 
-def _first_openapi_response_schema(spec: dict[str, Any]) -> dict[str, Any] | None:
-    for operation in _openapi_operations(spec):
+def _openapi_response_payloads(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for operation_ref in _openapi_operations(spec):
+        path = operation_ref["path"]
+        method = operation_ref["method"]
+        operation = operation_ref["operation"]
         responses = operation.get("responses")
         if not isinstance(responses, dict):
             continue
         for status_code, response in responses.items():
             if not str(status_code).startswith("2") or not isinstance(response, dict):
                 continue
-            schema = _schema_from_content(response.get("content"))
-            if schema is None and isinstance(response.get("schema"), dict):
-                schema = response["schema"]
-            if schema is not None:
-                return schema
-    return None
+            content_schemas = _schemas_from_content(response.get("content"))
+            for content_schema in content_schemas:
+                payloads.append(
+                    {
+                        "path": path,
+                        "method": method,
+                        "media_type": content_schema["media_type"],
+                        "status_code": str(status_code),
+                        "schema": content_schema["schema"],
+                    }
+                )
+            if not content_schemas and isinstance(response.get("schema"), dict):
+                payloads.append(
+                    {
+                        "path": path,
+                        "method": method,
+                        "media_type": "application/json",
+                        "status_code": str(status_code),
+                        "schema": response["schema"],
+                    }
+                )
+    return payloads
 
 
 def _openapi_operations(spec: dict[str, Any]) -> list[dict[str, Any]]:
@@ -234,25 +299,68 @@ def _openapi_operations(spec: dict[str, Any]) -> list[dict[str, Any]]:
     paths = spec.get("paths") or {}
     if not isinstance(paths, dict):
         return operations
-    for path_item in paths.values():
+    for path, path_item in paths.items():
         if not isinstance(path_item, dict):
             continue
         for method, operation in path_item.items():
             if method.lower() in HTTP_METHODS and isinstance(operation, dict):
-                operations.append(operation)
+                operations.append(
+                    {
+                        "path": str(path),
+                        "method": method.upper(),
+                        "operation": operation,
+                    }
+                )
     return operations
 
 
 def _schema_from_content(content: object) -> dict[str, Any] | None:
+    schemas = _schemas_from_content(content)
+    return schemas[0]["schema"] if schemas else None
+
+
+def _schemas_from_content(content: object) -> list[dict[str, Any]]:
     if not isinstance(content, dict):
-        return None
+        return []
+    schemas: list[dict[str, Any]] = []
     for media_type, media_def in content.items():
         if not isinstance(media_def, dict):
             continue
         schema = media_def.get("schema")
         if schema is not None and isinstance(schema, dict):
-            return schema
-    return None
+            schemas.append({"media_type": str(media_type), "schema": schema})
+    return schemas
+
+
+def _extracted_openapi_schema(
+    payload: dict[str, Any],
+    *,
+    direction: str,
+    payload_format: str,
+    spec: dict[str, Any],
+) -> dict[str, Any]:
+    source_path = payload["path"]
+    source_method = payload["method"]
+    media_type = payload.get("media_type") or payload_format
+    status_code = payload.get("status_code")
+    key_parts = ["openapi", direction.lower(), source_method, source_path, media_type]
+    if status_code:
+        key_parts.append(str(status_code))
+    source_key = "|".join(_source_key_part(part) for part in key_parts)
+    return {
+        "direction": direction,
+        "format": _payload_format(media_type, default=payload_format),
+        "source_key": source_key,
+        "source_path": source_path,
+        "source_method": source_method,
+        "media_type": media_type,
+        "status_code": status_code,
+        "schema": _resolve_schema(payload["schema"], spec),
+    }
+
+
+def _source_key_part(value: object) -> str:
+    return str(value).strip().lower().replace("|", "%7c")
 
 
 def _schema_from_swagger_parameters(parameters: object) -> dict[str, Any] | None:

@@ -81,6 +81,11 @@ class ApiSchemaSummary(BaseModel):
     version_number: str
     direction: str
     format: str
+    source_key: str
+    source_path: str | None = None
+    source_method: str | None = None
+    media_type: str | None = None
+    status_code: str | None = None
     schema_version: int
     created_at: str
     schema_definition: dict[str, Any]

@@ -51,6 +51,12 @@ components:
     )
 
     assert [schema["direction"] for schema in schemas] == ["INPUT", "OUTPUT"]
+    assert schemas[0]["source_key"] == "openapi|input|post|/invoices|application/json"
+    assert schemas[0]["source_path"] == "/invoices"
+    assert schemas[0]["source_method"] == "POST"
+    assert schemas[0]["media_type"] == "application/json"
+    assert schemas[1]["source_key"] == "openapi|output|post|/invoices|application/json|201"
+    assert schemas[1]["status_code"] == "201"
     assert schemas[0]["schema"]["properties"]["invoiceNumber"]["type"] == "string"
     assert schemas[1]["schema"]["properties"]["submissionId"]["type"] == "string"
 
@@ -141,6 +147,91 @@ paths:
     assert schemas[0]["schema"]["properties"]["invoiceNumber"]["type"] == "string"
     assert schemas[0]["schema"]["required"] == ["invoiceNumber"]
     assert schemas[1]["schema"]["properties"]["found"]["type"] == "boolean"
+
+
+def test_extract_openapi_keeps_distinct_operations_media_types_and_status_codes():
+    spec = """
+openapi: 3.0.3
+info:
+  title: Multi Payload API
+  version: 1.0.0
+paths:
+  /invoices:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                invoiceNumber:
+                  type: string
+          application/xml:
+            schema:
+              type: object
+              properties:
+                Invoice:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:
+                    type: boolean
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId:
+                    type: string
+  /credit-notes:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                creditNoteNumber:
+                  type: string
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  creditNoteId:
+                    type: string
+"""
+
+    schemas = extract_payload_schemas(
+        spec_type="OPENAPI",
+        spec_content=spec,
+        input_format="JSON",
+        output_format="JSON",
+    )
+
+    assert [schema["source_key"] for schema in schemas] == [
+        "openapi|input|post|/invoices|application/json",
+        "openapi|input|post|/invoices|application/xml",
+        "openapi|input|post|/credit-notes|application/json",
+        "openapi|output|post|/invoices|application/json|200",
+        "openapi|output|post|/invoices|application/json|202",
+        "openapi|output|post|/credit-notes|application/json|201",
+    ]
+    assert schemas[1]["format"] == "XML"
+    assert schemas[2]["schema"]["properties"]["creditNoteNumber"]["type"] == "string"
+    assert schemas[4]["status_code"] == "202"
+    assert schemas[4]["schema"]["properties"]["jobId"]["type"] == "string"
 
 
 def test_extract_wsdl_request_and_response_schemas():
