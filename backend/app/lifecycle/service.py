@@ -240,6 +240,12 @@ class LifecycleService:
             updated_at=updated_at,
         )
 
+    def get_validation_context(self, api_id: int, version_id: int) -> dict:
+        context = self.repository.get_validation_context(api_id, version_id)
+        if context is None:
+            raise CurrentVersionNotFoundError(api_id)
+        return context
+
     def _get_required_status(self, api_id: int) -> ApiStatus:
         status = self.repository.get_api_status(api_id)
         if status is None:

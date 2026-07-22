@@ -11,13 +11,11 @@ from app.schemas.validation_schema import (
 )
 from app.services.validation_service import validate_specification
 
-ValidateFn = Callable[[Protocol, str], ValidationResponse]
+ValidateFn = Callable[[ValidationRequest], ValidationResponse]
 
 
-def _default_validate(protocol: Protocol, spec_content: str) -> ValidationResponse:
-    return validate_specification(
-        ValidationRequest(protocol=protocol, spec_content=spec_content)
-    )
+def _default_validate(request: ValidationRequest) -> ValidationResponse:
+    return validate_specification(request)
 
 
 class SubmissionCoordinator:
@@ -61,7 +59,18 @@ class SubmissionCoordinator:
             is_admin=is_admin,
         )
 
-        response = self.validate(protocol, spec_content)
+        context = self.service.get_validation_context(api_id, result.version_id)
+        response = self.validate(
+            ValidationRequest(
+                protocol=Protocol(str(context.get("protocol_type") or protocol)),
+                spec_content=str(context.get("spec_content") or spec_content),
+                auth_method=context.get("auth_method"),
+                endpoint_url=context.get("endpoint_url"),
+                input_format=context.get("input_format"),
+                output_format=context.get("output_format"),
+                capability_category=context.get("capability_category"),
+            )
+        )
         for stage_result in response.stages:
             if stage_result.status == ValidationStatus.NOT_RUN:
                 continue
