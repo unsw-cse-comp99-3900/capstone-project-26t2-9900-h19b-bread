@@ -136,6 +136,13 @@ def compare_database_api_schemas(
         raise SchemaMappingError(f"Source schema {source_schema_id} was not found.")
     if target_schema is None:
         raise SchemaMappingError(f"Target schema {target_schema_id} was not found.")
+    if (
+        source_schema.get("api_status") != "PUBLISHED"
+        or source_schema.get("version_status") != "PUBLISHED"
+        or target_schema.get("api_status") != "PUBLISHED"
+        or target_schema.get("version_status") != "PUBLISHED"
+    ):
+        raise SchemaMappingError("Schema mapping is only available for published APIs.")
     if source_schema["api_id"] == target_schema["api_id"]:
         raise SchemaMappingError("Source and target schemas must belong to different APIs.")
 

@@ -1,7 +1,10 @@
+import app.services.schema_mapping.service as schema_mapping_service
 from app.services.schema_mapping.mapping_engine import FieldMapping, SchemaMapping
 from app.services.schema_mapping.repository import PostgresSchemaMappingRepository
 from app.services.schema_mapping.service import (
+    SchemaMappingError,
     build_compatibility_matrix,
+    compare_database_api_schemas,
     compare_schema_pair,
     infer_json_schema_from_sample,
     infer_xml_schema_from_sample,
@@ -25,6 +28,9 @@ class _FakeCursor:
 
     def fetchone(self):
         return self._row
+
+    def fetchall(self):
+        return []
 
 
 class _FakeConnection:
@@ -171,3 +177,49 @@ def test_save_mapping_upserts_by_schema_pair_not_version_pair():
     assert mapping_id == 17
     assert "ON CONFLICT (source_schema_id, target_schema_id)" in insert_statement
     assert "ON CONFLICT (source_api_id, target_api_id, source_version_id, target_version_id)" not in insert_statement
+
+
+def test_list_api_schemas_only_returns_published_api_versions():
+    cursor = _FakeCursor()
+    repository = PostgresSchemaMappingRepository(
+        connection_factory=lambda: _FakeConnection(cursor)
+    )
+
+    assert repository.list_api_schemas() == []
+
+    statement = cursor.statements[0][0]
+    assert "a.status = 'PUBLISHED'" in statement
+    assert "v.status = 'PUBLISHED'" in statement
+
+
+def test_compare_database_api_schemas_rejects_unpublished_schema(monkeypatch):
+    class FakeRepository:
+        def get_api_schema(self, schema_id):
+            if schema_id == 101:
+                return {
+                    "schema_id": 101,
+                    "api_id": 1,
+                    "api_name": "Draft Source",
+                    "version_id": 10,
+                    "api_status": "DRAFT",
+                    "version_status": "DRAFT",
+                    "schema_definition": _object_schema({"id": _field("string")}),
+                }
+            return {
+                "schema_id": 202,
+                "api_id": 2,
+                "api_name": "Published Target",
+                "version_id": 20,
+                "api_status": "PUBLISHED",
+                "version_status": "PUBLISHED",
+                "schema_definition": _object_schema({"id": _field("string")}),
+            }
+
+    monkeypatch.setattr(schema_mapping_service, "repository", FakeRepository())
+
+    try:
+        compare_database_api_schemas(101, 202)
+    except SchemaMappingError as exc:
+        assert "published APIs" in str(exc)
+    else:
+        raise AssertionError("Expected draft schema mapping to be rejected.")
