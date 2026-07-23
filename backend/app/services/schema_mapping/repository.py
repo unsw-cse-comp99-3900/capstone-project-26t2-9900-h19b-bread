@@ -53,13 +53,16 @@ class PostgresSchemaMappingRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT s.schema_id, s.api_id, a.api_name, s.version_id, v.version_number,
+                    SELECT s.schema_id, s.api_id, a.api_name, a.status AS api_status,
+                           s.version_id, v.version_number, v.status AS version_status,
                            s.direction, s.format, s.source_key, s.source_path,
                            s.source_method, s.media_type, s.status_code,
                            s.schema_version, s.raw_schema, s.normalized_schema, s.created_at
                     FROM api_schema s
                     JOIN api_submission a ON a.api_id = s.api_id
                     JOIN api_version v ON v.version_id = s.version_id
+                    WHERE a.status = 'PUBLISHED'
+                      AND v.status = 'PUBLISHED'
                     ORDER BY a.api_name, s.direction, s.source_path, s.source_method,
                              s.media_type, s.status_code, s.schema_version DESC, s.schema_id
                     """
@@ -74,7 +77,8 @@ class PostgresSchemaMappingRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT s.schema_id, s.api_id, a.api_name, s.version_id, v.version_number,
+                    SELECT s.schema_id, s.api_id, a.api_name, a.status AS api_status,
+                           s.version_id, v.version_number, v.status AS version_status,
                            s.direction, s.format, s.source_key, s.source_path,
                            s.source_method, s.media_type, s.status_code,
                            s.schema_version, s.raw_schema, s.normalized_schema, s.created_at
