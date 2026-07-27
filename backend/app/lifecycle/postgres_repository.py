@@ -11,6 +11,7 @@ from app.lifecycle.enums import (
     ValidationOverallStatus,
     ValidationStage,
     ValidationStageStatus,
+    VersionEventType,
 )
 
 
@@ -60,6 +61,16 @@ class PostgresLifecycleRepository:
         if row is None:
             return None
         return _to_api_status(row["status"])
+
+    def get_api_submitted_by(self, api_id: int) -> int | None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT submitted_by FROM api_submission WHERE api_id = %s",
+                    (api_id,),
+                )
+                row = cursor.fetchone()
+        return None if row is None else row["submitted_by"]
 
     def get_api_updated_at(self, api_id: int) -> datetime | None:
         with self._connection() as connection:
@@ -117,11 +128,9 @@ class PostgresLifecycleRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT version_id
-                    FROM api_version
+                    SELECT current_version_id AS version_id
+                    FROM api_submission
                     WHERE api_id = %s
-                    ORDER BY created_at DESC, version_id DESC
-                    LIMIT 1
                     """,
                     (api_id,),
                 )
@@ -130,6 +139,42 @@ class PostgresLifecycleRepository:
         if row is None:
             return None
         return row["version_id"]
+
+    def get_validation_context(
+        self,
+        api_id: int,
+        version_id: int,
+    ) -> dict | None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        version.protocol_type,
+                        version.endpoint_url,
+                        version.input_format,
+                        version.output_format,
+                        version.capability_category,
+                        auth.auth_method,
+                        specification.raw_content AS spec_content
+                    FROM api_version version
+                    LEFT JOIN LATERAL (
+                        SELECT auth_method
+                        FROM auth_metadata
+                        WHERE api_id = version.api_id
+                          AND version_id = version.version_id
+                        ORDER BY auth_id DESC
+                        LIMIT 1
+                    ) auth ON TRUE
+                    LEFT JOIN api_specification specification
+                      ON specification.version_id = version.version_id
+                    WHERE version.api_id = %s
+                      AND version.version_id = %s
+                    """,
+                    (api_id, version_id),
+                )
+                row = cursor.fetchone()
+        return None if row is None else dict(row)
 
     def update_version_status(
         self,
@@ -141,11 +186,123 @@ class PostgresLifecycleRepository:
                 cursor.execute(
                     """
                     UPDATE api_version
-                    SET status = %s
+                    SET status = %s,
+                        published_at = CASE WHEN %s = 'PUBLISHED' THEN CURRENT_TIMESTAMP ELSE published_at END,
+                        archived_at = CASE WHEN %s = 'ARCHIVED' THEN CURRENT_TIMESTAMP ELSE archived_at END
                     WHERE version_id = %s
                     """,
-                    (status.value, version_id),
+                    (status.value, status.value, status.value, version_id),
                 )
+
+    def archive_previous_version(self, api_id: int, current_version_id: int) -> None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE api_version previous
+                    SET status = 'ARCHIVED',
+                        is_current = FALSE,
+                        archived_at = CURRENT_TIMESTAMP
+                    WHERE previous.version_id = (
+                        SELECT candidate.version_id
+                        FROM api_version candidate
+                        WHERE candidate.api_id = %s
+                          AND candidate.version_id <> %s
+                          AND candidate.status = 'PUBLISHED'
+                        ORDER BY candidate.published_at DESC NULLS LAST,
+                                 candidate.version_id DESC
+                        LIMIT 1
+                    )
+                    """,
+                    (api_id, current_version_id),
+                )
+
+    def get_previous_published_version_id(
+        self,
+        api_id: int,
+        current_version_id: int,
+    ) -> int | None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT version_id
+                    FROM api_version
+                    WHERE api_id = %s
+                      AND version_id <> %s
+                      AND status = 'PUBLISHED'
+                    ORDER BY published_at DESC NULLS LAST, version_id DESC
+                    LIMIT 1
+                    """,
+                    (api_id, current_version_id),
+                )
+                row = cursor.fetchone()
+        return None if row is None else row["version_id"]
+
+    def restore_api_current_version(
+        self,
+        api_id: int,
+        version_id: int,
+        status: ApiStatus,
+    ) -> None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE api_version
+                    SET is_current = (version_id = %s)
+                    WHERE api_id = %s
+                    """,
+                    (version_id, api_id),
+                )
+                cursor.execute(
+                    """
+                    UPDATE api_submission
+                    SET current_version_id = %s,
+                        status = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE api_id = %s
+                    """,
+                    (version_id, status.value, api_id),
+                )
+
+    def create_version_event(
+        self,
+        api_id: int,
+        version_id: int,
+        event_type: VersionEventType,
+        from_status: ApiVersionStatus | None,
+        to_status: ApiVersionStatus | None,
+        actor_user_id: int | None,
+        message: str | None = None,
+    ) -> int:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO api_version_event (
+                        version_id,
+                        api_id,
+                        actor_user_id,
+                        event_type,
+                        from_status,
+                        to_status,
+                        message
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    RETURNING event_id
+                    """,
+                    (
+                        version_id,
+                        api_id,
+                        actor_user_id,
+                        event_type.value,
+                        from_status.value if from_status is not None else None,
+                        to_status.value if to_status is not None else None,
+                        message,
+                    ),
+                )
+                return cursor.fetchone()["event_id"]
 
     def create_validation_run(
         self,
@@ -160,10 +317,9 @@ class PostgresLifecycleRepository:
                     INSERT INTO validation_run (
                         api_id,
                         version_id,
-                        overall_status,
-                        completed_at
+                        overall_status
                     )
-                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                    VALUES (%s, %s, %s)
                     RETURNING validation_run_id
                     """,
                     (api_id, version_id, overall_status.value),
@@ -171,6 +327,31 @@ class PostgresLifecycleRepository:
                 row = cursor.fetchone()
 
         return row["validation_run_id"]
+
+    def get_active_validation_run_id(
+        self,
+        api_id: int,
+        version_id: int,
+        validation_run_id: int | None = None,
+    ) -> int | None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT validation_run_id
+                    FROM validation_run
+                    WHERE api_id = %s
+                      AND version_id = %s
+                      AND overall_status IN ('RUNNING', 'PARTIAL')
+                      AND (%s IS NULL OR validation_run_id = %s)
+                    ORDER BY started_at DESC, validation_run_id DESC
+                    LIMIT 1
+                    FOR UPDATE
+                    """,
+                    (api_id, version_id, validation_run_id, validation_run_id),
+                )
+                row = cursor.fetchone()
+        return None if row is None else row["validation_run_id"]
 
     def save_validation_result(
         self,
@@ -192,6 +373,12 @@ class PostgresLifecycleRepository:
                         error_detail
                     )
                     VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (validation_run_id, stage)
+                    DO UPDATE SET
+                        status = EXCLUDED.status,
+                        message = EXCLUDED.message,
+                        error_detail = EXCLUDED.error_detail,
+                        created_at = CURRENT_TIMESTAMP
                     """,
                     (
                         validation_run_id,
@@ -200,4 +387,45 @@ class PostgresLifecycleRepository:
                         message,
                         error_detail,
                     ),
+                )
+
+    def get_validation_stage_statuses(
+        self,
+        validation_run_id: int,
+    ) -> dict[ValidationStage, ValidationStageStatus]:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT stage, status
+                    FROM validation_result
+                    WHERE validation_run_id = %s
+                    """,
+                    (validation_run_id,),
+                )
+                rows = cursor.fetchall()
+        return {
+            ValidationStage(str(row["stage"])): ValidationStageStatus(str(row["status"]))
+            for row in rows
+        }
+
+    def update_validation_run_status(
+        self,
+        validation_run_id: int,
+        status: ValidationOverallStatus,
+        completed: bool,
+    ) -> None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE validation_run
+                    SET overall_status = %s,
+                        completed_at = CASE
+                            WHEN %s THEN CURRENT_TIMESTAMP
+                            ELSE NULL
+                        END
+                    WHERE validation_run_id = %s
+                    """,
+                    (status.value, completed, validation_run_id),
                 )

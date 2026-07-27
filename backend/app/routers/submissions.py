@@ -17,6 +17,7 @@ from app.schemas.submission_schema import (
 )
 from app.schemas.validation_schema import ValidationRequest
 from app.services.validation_service import validate_specification
+from app.services.schema_mapping.spec_schema_extractor import sync_api_schemas_from_spec
 
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
@@ -86,20 +87,20 @@ def map_spec_type(protocol_type: str) -> str:
 
 
 def map_auth_method(auth_method: str) -> str:
-    auth_method_value = (
-        auth_method.strip()
-        .upper()
-        .replace(" ", "_")
-        .replace("-", "_")
-        .replace("OAUTH_2.0", "OAUTH2")
-        .replace("OAUTH2.0", "OAUTH2")
-    )
+    auth_method_value = auth_method.strip().upper().replace(" ", "_").replace("-", "_")
+    auth_method_value = auth_method_value.replace(".", "_")
 
-    if auth_method_value in {"OAUTH_2", "OAUTH2"}:
+    if auth_method_value in {"OAUTH_2", "OAUTH2", "OAUTH_2_0"}:
         return "OAUTH2"
 
     if auth_method_value in {"APIKEY", "API_KEY"}:
         return "API_KEY"
+
+    if auth_method_value in {"BASIC", "BASIC_AUTHENTICATION", "BASIC_AUTH"}:
+        return "BASIC"
+
+    if auth_method_value in {"MTLS", "MUTUAL_TLS"}:
+        return "MTLS"
 
     allowed_methods = {
         "OAUTH2",
@@ -295,10 +296,6 @@ def create_submission_records(
                 (version_id, api_id),
             )
 
-            resolved_file_path = file_path
-            if resolved_file_path and "{api_id}" in resolved_file_path:
-                resolved_file_path = resolved_file_path.format(api_id=api_id)
-
             cursor.execute(
                 """
                 INSERT INTO api_specification (
@@ -315,10 +312,20 @@ def create_submission_records(
                     version_id,
                     spec_type,
                     source_type,
-                    resolved_file_path,
+                    file_path,
                     spec_url,
                     request.spec_content,
                 ),
+            )
+
+            sync_api_schemas_from_spec(
+                cursor,
+                api_id=api_id,
+                version_id=version_id,
+                spec_type=spec_type,
+                spec_content=request.spec_content,
+                input_format=request.input_format,
+                output_format=request.output_format,
             )
 
             cursor.execute(
@@ -445,7 +452,7 @@ def create_submission(
             submission_status=db_submission_status,
             version_status=db_version_status,
             source_type="FILE_UPLOAD",
-            file_path="inline/submission_{api_id}.txt",
+            file_path="inline/submission.txt",
             spec_url=None,
             validation_result=validation_result,
         )
@@ -585,7 +592,7 @@ def save_draft(
             submission_status="DRAFT",
             version_status="DRAFT",
             source_type="FILE_UPLOAD",
-            file_path="inline/draft_{api_id}.txt",
+            file_path="inline/draft.txt",
             spec_url=None,
             validation_result=None,
         )

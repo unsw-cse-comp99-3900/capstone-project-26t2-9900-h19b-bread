@@ -14,6 +14,7 @@ from app.schemas.validation_schema import (
     ValidationStage,
     ValidationStatus,
 )
+from app.services.api_parser_service import parse_wsdl
 from app.services.validation_service import _run_security_stage
 
 
@@ -79,7 +80,7 @@ def test_auth_method_missing_fails():
 
 
 def test_auth_method_unsupported_fails():
-    status, errors = _security(_valid_oauth2_spec(), auth_method="JWT")
+    status, errors = _security(_valid_oauth2_spec(), auth_method="Digest")
     assert status == ValidationStatus.FAIL
     assert "SECURITY_AUTH_METHOD_UNSUPPORTED" in _codes(errors)
 
@@ -140,6 +141,26 @@ def test_basic_auth_http_scheme_matches():
     assert _codes(errors) == []
 
 
+def test_bearer_http_scheme_matches_bearer_metadata():
+    spec = _spec(
+        schemes={"BearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}},
+        root_security=[{"BearerAuth": []}],
+    )
+    status, errors = _security(spec, auth_method="Bearer")
+    assert status == ValidationStatus.PASS
+    assert _codes(errors) == []
+
+
+def test_bearer_http_scheme_matches_jwt_alias():
+    spec = _spec(
+        schemes={"BearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}},
+        root_security=[{"BearerAuth": []}],
+    )
+    status, errors = _security(spec, auth_method="JWT")
+    assert status == ValidationStatus.PASS
+    assert _codes(errors) == []
+
+
 def test_valid_oauth2_spec_passes():
     status, errors = _security(_valid_oauth2_spec(), auth_method="OAuth2")
     assert status == ValidationStatus.PASS
@@ -156,15 +177,81 @@ def test_rest_spec_unavailable_fails():
 
 
 # --------------------------------------------------------------------------- #
-# SOAP: only Rule 1 applies in Sprint 2
+# SOAP / WSDL security
 # --------------------------------------------------------------------------- #
-def test_soap_with_valid_auth_passes():
-    status, errors = _security(None, auth_method="OAuth2", protocol=Protocol.SOAP)
+def _wsdl_security(policy_body: str = "", location: str = "http://example.com/svc") -> str:
+    """Build a minimal WSDL with an optional <wsp:Policy> and a soap:address."""
+    policy = f"<wsp:Policy>{policy_body}</wsp:Policy>" if policy_body else ""
+    return (
+        '<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" '
+        'xmlns:wsp="http://www.w3.org/ns/ws-policy" '
+        'xmlns:sp="http://docs.oasis-open.org/ws-sx/ws-securitypolicy/200702" '
+        'xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" '
+        'targetNamespace="http://example.com/svc">'
+        f"{policy}"
+        '<service name="S"><port name="P">'
+        f'<soap:address location="{location}"/>'
+        "</port></service></definitions>"
+    )
+
+
+def _soap_security(wsdl: str, auth_method: str):
+    """Parse a WSDL string and run only the security stage against its root."""
+    root, _ = parse_wsdl(wsdl)
+    request = ValidationRequest(
+        protocol=Protocol.SOAP,
+        spec_content=wsdl,
+        auth_method=auth_method,
+    )
+    return _run_security_stage(request, root)
+
+
+def test_soap_no_security_at_all_fails():
+    """Decision 1: no policy / token / HTTPS -> hard FAIL."""
+    wsdl = _wsdl_security(policy_body="", location="http://example.com/svc")
+    status, errors = _soap_security(wsdl, auth_method="Basic")
+    assert status == ValidationStatus.FAIL
+    assert "SECURITY_REQUIREMENT_MISSING" in _codes(errors)
+
+
+def test_soap_username_token_matches_basic():
+    wsdl = _wsdl_security(policy_body="<sp:UsernameToken/>")
+    status, errors = _soap_security(wsdl, auth_method="Basic")
     assert status == ValidationStatus.PASS
     assert _codes(errors) == []
 
 
-def test_soap_with_missing_auth_fails():
-    status, errors = _security(None, auth_method="", protocol=Protocol.SOAP)
+def test_soap_username_token_mismatch_mtls_fails():
+    """Decision: BASIC/MTLS are strongly judged -> mismatch is blocking."""
+    wsdl = _wsdl_security(policy_body="<sp:UsernameToken/>")
+    status, errors = _soap_security(wsdl, auth_method="mTLS")
+    assert status == ValidationStatus.FAIL
+    assert "SECURITY_AUTH_METADATA_MISMATCH" in _codes(errors)
+
+
+def test_soap_https_transport_matches_mtls():
+    wsdl = _wsdl_security(policy_body="", location="https://example.com/svc")
+    status, errors = _soap_security(wsdl, auth_method="mTLS")
+    assert status == ValidationStatus.PASS
+    assert _codes(errors) == []
+
+
+def test_soap_oauth2_unverifiable_warns_but_passes():
+    """Decision 2: OAuth2/API Key can't be confirmed from WSDL -> warning, not FAIL."""
+    wsdl = _wsdl_security(policy_body="<sp:TransportBinding/>")
+    status, errors = _soap_security(wsdl, auth_method="OAuth2")
+    assert status == ValidationStatus.PASS
+    assert "SECURITY_AUTH_UNVERIFIABLE" in _codes(errors)
+
+
+def test_soap_missing_auth_fails():
+    wsdl = _wsdl_security(policy_body="<sp:UsernameToken/>")
+    status, errors = _soap_security(wsdl, auth_method="")
     assert status == ValidationStatus.FAIL
     assert "SECURITY_AUTH_METHOD_MISSING" in _codes(errors)
+
+
+def test_soap_spec_unavailable_fails():
+    status, errors = _security(None, auth_method="OAuth2", protocol=Protocol.SOAP)
+    assert status == ValidationStatus.FAIL
+    assert "SECURITY_SPEC_UNAVAILABLE" in _codes(errors)

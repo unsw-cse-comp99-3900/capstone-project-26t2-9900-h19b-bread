@@ -1,3 +1,4 @@
+import xml.etree.ElementTree as ET
 from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -229,6 +230,120 @@ def _check_rest_metadata(
     return errors
 
 
+def _check_soap_format(
+    declared_format: Optional[str],
+    direction: str,
+    errors: List[ValidationErrorDetail],
+) -> None:
+    """SOAP payloads are XML; warn if a declared input/output format is not XML/UBL."""
+    expected = _format_expected_token(declared_format)
+    if not expected:
+        return  # nothing declared or unrecognized token -> nothing to check
+    if expected != "xml":
+        errors.append(
+            ValidationErrorDetail(
+                code=f"METADATA_{direction.upper()}_FORMAT_MISMATCH",
+                message=(
+                    f"Declared {direction} format '{declared_format}' is inconsistent with "
+                    f"SOAP: SOAP message payloads are XML (e.g. XML / UBL)."
+                ),
+                path=f"{direction}_format",
+                severity="warning",
+                stage=ValidationStage.SPECIFICATION_VALIDATION,
+            )
+        )
+
+
+def _check_soap_metadata(
+    request: ValidationRequest,
+    xml_root: "ET.Element",
+) -> List[ValidationErrorDetail]:
+    """
+    FR-3 metadata consistency for SOAP: endpoint_url vs soap:address locations,
+    and input/output_format vs SOAP's inherently-XML payloads.
+    Reported under the specification stage; mismatches are warnings (non-blocking).
+    """
+    errors: List[ValidationErrorDetail] = []
+    stage = ValidationStage.SPECIFICATION_VALIDATION
+
+    # endpoint_url vs <soap:address location="...">
+    if request.endpoint_url:
+        locations = {
+            elem.get("location")
+            for elem in xml_root.iter()
+            if _local_tag(elem.tag).lower() == "address" and elem.get("location")
+        }
+        if not locations:
+            errors.append(
+                ValidationErrorDetail(
+                    code="METADATA_ENDPOINT_UNVERIFIABLE",
+                    message="WSDL declares no soap:address; endpoint_url cannot be verified.",
+                    path="endpoint_url",
+                    severity="warning",
+                    stage=stage,
+                )
+            )
+        else:
+            declared_host = urlparse(request.endpoint_url).netloc or request.endpoint_url
+            spec_hosts = {
+                urlparse(url).netloc for url in locations if isinstance(url, str)
+            }
+            if declared_host and declared_host not in spec_hosts:
+                errors.append(
+                    ValidationErrorDetail(
+                        code="METADATA_ENDPOINT_MISMATCH",
+                        message=(
+                            f"Declared endpoint_url host '{declared_host}' does not match any "
+                            f"soap:address in the WSDL ({', '.join(sorted(spec_hosts))})."
+                        ),
+                        path="endpoint_url",
+                        severity="warning",
+                        stage=stage,
+                    )
+                )
+
+    _check_soap_format(request.input_format, "input", errors)
+    _check_soap_format(request.output_format, "output", errors)
+
+    return errors
+
+
+def _validate_wsdl_structure(xml_root: "ET.Element") -> List[ValidationErrorDetail]:
+    """
+    FR-4 structural completeness for WSDL (the SOAP analogue of validate_spec).
+
+    parse_wsdl only guarantees well-formed XML with a <definitions> root; this
+    goes further and requires the essential service contract: at least one
+    <portType> declaring at least one <operation>. Missing pieces are blocking.
+    """
+    errors: List[ValidationErrorDetail] = []
+    stage = ValidationStage.SPECIFICATION_VALIDATION
+
+    local_tags = [_local_tag(elem.tag).lower() for elem in xml_root.iter()]
+    tag_set = set(local_tags)
+
+    if "porttype" not in tag_set:
+        errors.append(
+            ValidationErrorDetail(
+                code="WSDL_NO_PORTTYPE",
+                message="WSDL must declare at least one <portType> (service interface).",
+                path="wsdl:portType",
+                stage=stage,
+            )
+        )
+    elif "operation" not in tag_set:
+        errors.append(
+            ValidationErrorDetail(
+                code="WSDL_NO_OPERATION",
+                message="WSDL <portType> must declare at least one <operation>.",
+                path="wsdl:portType/operation",
+                stage=stage,
+            )
+        )
+
+    return errors
+
+
 def _check_capability_category(
     request: ValidationRequest,
     haystack: str,
@@ -356,7 +471,17 @@ def _run_specification_stage(
         xml_root, parse_errors = parse_wsdl(request.spec_content)
         _tag_errors(parse_errors, ValidationStage.SPECIFICATION_VALIDATION)
         errors.extend(parse_errors)
-        status = ValidationStatus.PASS if not errors else ValidationStatus.FAIL
+
+        # FR-4 structural completeness (portType / operation), analogous to
+        # validate_spec for OpenAPI.
+        if isinstance(xml_root, ET.Element):
+            errors.extend(_validate_wsdl_structure(xml_root))
+
+        # FR-3 metadata consistency (endpoint / formats) only if structurally sound.
+        if not _has_blocking(errors) and isinstance(xml_root, ET.Element):
+            errors.extend(_check_soap_metadata(request, xml_root))
+
+        status = ValidationStatus.FAIL if _has_blocking(errors) else ValidationStatus.PASS
         return status, errors, xml_root
 
     errors.append(
@@ -411,6 +536,19 @@ _DOMAIN_STANDARD_MARKERS = (
     "bis billing",
 )
 
+_DOMAIN_VALIDATION_MARKERS = (
+    "schematron",
+    "validate",
+    "validation",
+    "validator",
+)
+_DOMAIN_FILE_PAYLOAD_MARKERS = (
+    "file",
+    "filename",
+    "content",
+    "checksum",
+    "xmlfile",
+)
 
 def _normalize_field_name(name: str) -> str:
     """Lowercase and strip separators / XML namespace prefixes for matching."""
@@ -461,51 +599,41 @@ def _collect_property_names(
             _collect_property_names(entry, names, depth + 1)
 
 
-def _run_domain_stage(
-    request: ValidationRequest,
-    parsed_spec: Optional[object],
-) -> Tuple[ValidationStatus, List[ValidationErrorDetail]]:
+def _collect_domain_text(
+    node: object,
+    parts: list,
+    depth: int = 0,
+) -> None:
+    """Collect descriptive OpenAPI text that can carry domain standards."""
+    if depth > 40 or node is None:
+        return
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in {"title", "description", "summary", "operationId", "name", "default"}:
+                parts.append(str(value))
+            elif key == "enum" and isinstance(value, list):
+                parts.extend(str(item) for item in value)
+            elif key not in _SCHEMA_SKIP_KEYS:
+                _collect_domain_text(value, parts, depth + 1)
+    elif isinstance(node, list):
+        for entry in node:
+            _collect_domain_text(entry, parts, depth + 1)
+
+
+def _extract_rest_domain_signals(parsed_spec: dict) -> Tuple[str, set]:
     """
-    FR-5: E-invoicing domain compliance validation.
+    Extract FR-5 domain signals from a parsed OpenAPI document.
 
-    Scoring model (aligned with EN 16931 / UBL 2.1 / PEPPOL BIS Billing 3.0):
-        strong   = number of distinct core invoice field categories matched (0..9)
-        standard = +2 if the spec references a recognized e-invoicing standard
-        keyword  = number of weak textual keywords matched, capped at +2
-        score    = strong + standard + min(keyword, 2)
+    Returns (haystack, normalized_fields):
+      - haystack: lowercased text blob (title/description/tags/paths/operations),
+        used for weak-keyword and standard-marker matching.
+      - normalized_fields: normalized schema property names collected from both
+        components.schemas and inline request/response schemas under paths.
 
-    Hard gate:
-        A submission can only PASS if it shows *structural* or *standard* evidence,
-        i.e. strong >= 1 OR a recognized standard is referenced. This blocks
-        "keyword-only" fakes (invoice/tax words in text but no invoice fields).
-
-    Decision:
-        not (strong >= 1 or standard)   -> FAIL (DOMAIN_NOT_EINVOICING)
-        eligible and score >= 4         -> PASS
-        eligible and 2 <= score < 4     -> PASS + warning (weak but plausible)
-        eligible and score < 2          -> FAIL (DOMAIN_NOT_EINVOICING)
+    This is the REST-specific "signal collection" half of the domain stage; the
+    scoring/decision half (_evaluate_domain_signals) is protocol-agnostic so SOAP
+    can feed the same shape of signals in a later step.
     """
-    errors: List[ValidationErrorDetail] = []
-    stage = ValidationStage.DOMAIN_COMPLIANCE_VALIDATION
-
-    if request.protocol == Protocol.SOAP:
-        # Sprint 2 simplification: WSDL domain parsing is limited; skip deep rules.
-        return ValidationStatus.PASS, errors
-
-    if request.protocol != Protocol.REST:
-        return ValidationStatus.PASS, errors
-
-    if not isinstance(parsed_spec, dict):
-        errors.append(
-            ValidationErrorDetail(
-                code="DOMAIN_SPEC_UNAVAILABLE",
-                message="Parsed OpenAPI document is unavailable for domain validation.",
-                path=None,
-                stage=stage,
-            )
-        )
-        return ValidationStatus.FAIL, errors
-
     # --- Signal 1: textual haystack (title/description/tags/paths/operations) ---
     haystack_parts: List[str] = []
 
@@ -530,18 +658,52 @@ def _run_domain_stage(
                 if isinstance(operation, dict):
                     haystack_parts.append(str(operation.get("operationId") or ""))
                     haystack_parts.append(str(operation.get("summary") or ""))
-
+                    _collect_domain_text(operation.get("parameters"), haystack_parts)
+                    _collect_domain_text(operation.get("requestBody"), haystack_parts)
+                    _collect_domain_text(operation.get("responses"), haystack_parts)
+    components = parsed_spec.get("components") or {}
+    _collect_domain_text(components.get("schemas"), haystack_parts)
     haystack = " ".join(haystack_parts).lower()
 
     # --- Signal 2: schema property names -> core invoice field categories ---
     # Collect from both reusable components.schemas AND inline request/response
     # schemas declared under paths, so specs that inline their models are covered.
-    components = parsed_spec.get("components") or {}
     field_names: set = set()
     _collect_property_names(components.get("schemas"), field_names)
     _collect_property_names(parsed_spec.get("paths"), field_names)
 
     normalized_fields = {_normalize_field_name(name) for name in field_names}
+    return haystack, normalized_fields
+
+
+def _evaluate_domain_signals(
+    haystack: str,
+    normalized_fields: set,
+    stage: ValidationStage,
+) -> List[ValidationErrorDetail]:
+    """
+    Apply the FR-5 scoring model + hard gate to already-extracted signals.
+
+    Scoring model (aligned with EN 16931 / UBL 2.1 / PEPPOL BIS Billing 3.0):
+        strong   = number of distinct core invoice field categories matched (0..9)
+        standard = +2 if the spec references a recognized e-invoicing standard
+        keyword  = number of weak textual keywords matched, capped at +2
+        score    = strong + standard + min(keyword, 2)
+
+    Hard gate:
+        A submission can only PASS if it shows *structural* or *standard* evidence,
+        i.e. strong >= 1 OR a recognized standard is referenced. This blocks
+        "keyword-only" fakes (invoice/tax words in text but no invoice fields).
+
+    Decision (returns the domain-signal errors, empty when strong evidence):
+        not (strong >= 1 or standard)   -> DOMAIN_NOT_EINVOICING (blocking)
+        eligible and score >= 4         -> no error
+        eligible and 2 <= score < 4     -> DOMAIN_INSUFFICIENT_SIGNALS (warning)
+        eligible and score < 2          -> DOMAIN_NOT_EINVOICING (blocking)
+
+    Protocol-agnostic: both REST and SOAP feed (haystack, normalized_fields) here.
+    """
+    errors: List[ValidationErrorDetail] = []
 
     matched_categories = set()
     for category, fragments in _DOMAIN_FIELD_CATEGORIES.items():
@@ -552,22 +714,14 @@ def _run_domain_stage(
 
     strong_score = len(matched_categories)
 
-    # --- Signal 3: explicit e-invoicing standard reference ---
-    normalized_haystack = "".join(ch if ch.isalnum() else " " for ch in haystack)
-    haystack_tokens = normalized_haystack.split()
-
-    standard_matched = False
-    for marker in _DOMAIN_STANDARD_MARKERS:
-        if " " in marker and marker in normalized_haystack:
-            standard_matched = True
-            break
-        if " " not in marker and any(token.startswith(marker) for token in haystack_tokens):
-            standard_matched = True
-            break
-
+    standard_matched = any(marker in haystack for marker in _DOMAIN_STANDARD_MARKERS)
     standard_score = 2 if standard_matched else 0
+    validation_service_matched = (
+        standard_matched
+        and any(marker in haystack for marker in _DOMAIN_VALIDATION_MARKERS)
+        and any(marker in field for marker in _DOMAIN_FILE_PAYLOAD_MARKERS for field in normalized_fields)
+    )
 
-    # --- Signal 4: weak keywords (capped) ---
     keyword_hits = sum(1 for keyword in _DOMAIN_KEYWORDS if keyword in haystack)
     keyword_score = min(keyword_hits, 2)
 
@@ -575,9 +729,11 @@ def _run_domain_stage(
 
     # Hard gate: keyword-only evidence can never pass. Passing requires at least
     # one structural invoice field OR an explicit e-invoicing standard reference.
-    eligible_to_pass = strong_score >= 1 or standard_matched
+    eligible_to_pass = strong_score >= 1 or standard_matched or validation_service_matched
 
-    if eligible_to_pass and score >= 4:
+    if validation_service_matched:
+        pass  # e-invoicing validation tools often accept XML/file payloads, not expanded invoice fields.
+    elif eligible_to_pass and score >= 4:
         pass  # strong evidence; no domain-signal error to add
     elif eligible_to_pass and score >= 2:
         # Plausible but weak: surface a warning for FR-7 (non-blocking).
@@ -609,11 +765,171 @@ def _run_domain_stage(
             )
         )
 
+    return errors
+
+
+# XSD constructs whose "name" attribute is a real data-field definition.
+_SOAP_FIELD_TAGS = frozenset({"element", "attribute", "complexType", "simpleType"})
+
+# WSDL constructs whose "name" attribute is descriptive text (goes to haystack).
+_SOAP_TEXT_TAGS = frozenset(
+    {"portType", "operation", "message", "service", "port", "binding"}
+)
+
+
+def _local_tag(tag: object) -> str:
+    """Return the local name of an ElementTree tag, dropping any '{ns}' prefix."""
+    if isinstance(tag, str) and tag.startswith("{"):
+        return tag.split("}", 1)[-1]
+    return tag if isinstance(tag, str) else ""
+
+
+def _extract_soap_domain_signals(xml_root: "ET.Element") -> Tuple[str, set]:
+    """
+    Extract FR-5 domain signals from a parsed WSDL document (ElementTree root).
+
+    Returns (haystack, normalized_fields) with the SAME shape as the REST
+    extractor, so the shared _evaluate_domain_signals scoring applies unchanged:
+      - normalized_fields: names of XSD element/attribute/complexType/simpleType
+        declared under <wsdl:types> (the SOAP equivalent of OpenAPI schema props).
+      - haystack: portType/operation/service names, <documentation> text, plus
+        every XML namespace URI and targetNamespace (this is where UBL / PEPPOL /
+        EN 16931 standard markers live in SOAP specs).
+    """
+    haystack_parts: List[str] = []
+    field_names: set = set()
+    namespaces: set = set()
+
+    if xml_root is None:
+        return "", set()
+
+    root_tns = xml_root.get("targetNamespace")
+    if root_tns:
+        haystack_parts.append(root_tns)
+
+    for elem in xml_root.iter():
+        tag = elem.tag
+        # Harvest the namespace URI embedded in the tag ("{uri}local").
+        if isinstance(tag, str) and tag.startswith("{"):
+            namespaces.add(tag[1:].split("}", 1)[0])
+        local = _local_tag(tag)
+
+        name_attr = elem.get("name")
+        if name_attr:
+            if local in _SOAP_FIELD_TAGS:
+                field_names.add(name_attr)
+            elif local in _SOAP_TEXT_TAGS:
+                haystack_parts.append(name_attr)
+
+        if local == "documentation" and elem.text:
+            haystack_parts.append(elem.text)
+
+        nested_tns = elem.get("targetNamespace")
+        if nested_tns:
+            haystack_parts.append(nested_tns)
+
+    haystack_parts.extend(namespaces)
+    haystack = " ".join(haystack_parts).lower()
+    normalized_fields = {_normalize_field_name(name) for name in field_names}
+    return haystack, normalized_fields
+
+
+def _run_domain_stage(
+    request: ValidationRequest,
+    parsed_spec: Optional[object],
+) -> Tuple[ValidationStatus, List[ValidationErrorDetail]]:
+    """
+    FR-5: E-invoicing domain compliance validation.
+
+    Orchestration only: pick the protocol-specific signal extractor, run the
+    shared scoring/decision, then add FR-3 capability-category checks.
+    Both REST (OpenAPI dict) and SOAP (WSDL ElementTree) produce the same
+    (haystack, normalized_fields) shape, so scoring is identical across protocols.
+    """
+    errors: List[ValidationErrorDetail] = []
+    stage = ValidationStage.DOMAIN_COMPLIANCE_VALIDATION
+
+    if request.protocol == Protocol.REST:
+        if not isinstance(parsed_spec, dict):
+            errors.append(
+                ValidationErrorDetail(
+                    code="DOMAIN_SPEC_UNAVAILABLE",
+                    message="Parsed OpenAPI document is unavailable for domain validation.",
+                    path=None,
+                    stage=stage,
+                )
+            )
+            return ValidationStatus.FAIL, errors
+        haystack, normalized_fields = _extract_rest_domain_signals(parsed_spec)
+
+    elif request.protocol == Protocol.SOAP:
+        if not isinstance(parsed_spec, ET.Element):
+            errors.append(
+                ValidationErrorDetail(
+                    code="DOMAIN_SPEC_UNAVAILABLE",
+                    message="Parsed WSDL document is unavailable for domain validation.",
+                    path=None,
+                    stage=stage,
+                )
+            )
+            return ValidationStatus.FAIL, errors
+        haystack, normalized_fields = _extract_soap_domain_signals(parsed_spec)
+
+    else:
+        return ValidationStatus.PASS, errors
+
+    errors.extend(_evaluate_domain_signals(haystack, normalized_fields, stage))
+
     # FR-3 metadata: capability_category validity + consistency with operations.
     errors.extend(_check_capability_category(request, haystack))
 
     status = ValidationStatus.FAIL if _has_blocking(errors) else ValidationStatus.PASS
     return status, errors
+
+
+def _extract_soap_security_signals(xml_root: "ET.Element") -> Tuple[bool, set]:
+    """
+    Detect security evidence in a parsed WSDL document (ElementTree root).
+
+    Returns (has_any_security, methods):
+      - has_any_security: True if the WSDL shows *any* security intent, i.e. a
+        WS-Policy element, a recognized WS-SecurityPolicy token, or an HTTPS
+        transport address. Used for the "no security at all" hard gate.
+      - methods: the subset of {BASIC, MTLS, OAUTH2} we can positively map from
+        the WSDL. API_KEY is intentionally absent: SOAP has no standard place to
+        declare it, so it is never positively detectable here.
+
+    Mapping (best-effort, aligned with WS-SecurityPolicy 1.2):
+      - UsernameToken                      -> BASIC
+      - X509Token / TransportBinding / HTTPS transport -> MTLS (transport/message TLS)
+      - IssuedToken / SamlToken            -> OAUTH2 (federated / bearer-style)
+    """
+    methods: set = set()
+    has_policy = False
+    https = False
+
+    if xml_root is None:
+        return False, methods
+
+    for elem in xml_root.iter():
+        local = _local_tag(elem.tag).lower()
+
+        if local == "policy":
+            has_policy = True
+        elif local == "usernametoken":
+            methods.add("BASIC")
+        elif local in ("x509token", "transportbinding"):
+            methods.add("MTLS")
+        elif local in ("issuedtoken", "samltoken"):
+            methods.add("OAUTH2")
+        elif local == "address":
+            location = (elem.get("location") or "").strip().lower()
+            if location.startswith("https://"):
+                https = True
+                methods.add("MTLS")  # transport-level TLS / mTLS evidence
+
+    has_any_security = has_policy or https or bool(methods)
+    return has_any_security, methods
 
 
 def _run_security_stage(
@@ -627,15 +943,19 @@ def _run_security_stage(
     stage = ValidationStage.SECURITY_VALIDATION
 
     # Rule 1: Forms must have legal auth_method.
-    allowed = {"OAUTH2", "API_KEY", "BASIC", "MTLS"}
+    allowed = {"OAUTH2", "API_KEY", "BASIC", "MTLS", "TOKEN", "BEARER"}
 
     raw_auth = (request.auth_method or "").strip().upper()
     normalized_auth = (
         raw_auth.replace(" ", "_")
         .replace("-", "_")
+        .replace("/", "_")
         .replace("OAUTH_2.0", "OAUTH2")
         .replace("OAUTH2.0", "OAUTH2")
     )
+
+    if normalized_auth in {"JWT", "BEARER_JWT"}:
+        normalized_auth = "BEARER"
 
     if not normalized_auth:
         errors.append(
@@ -652,7 +972,7 @@ def _run_security_stage(
                 code="SECURITY_AUTH_METHOD_UNSUPPORTED",
                 message=(
                     f"Authentication method '{request.auth_method}' is not accepted. "
-                    f"Allowed: OAuth2, API Key, Basic, mTLS."
+                    f"Allowed: OAuth2, Bearer/JWT, API Key, Basic, mTLS."
                 ),
                 path="auth_method",
                 stage=stage,
@@ -703,9 +1023,13 @@ def _run_security_stage(
                         http_scheme = (scheme_body.get("scheme") or "").strip().lower()
                         if http_scheme == "basic":
                             mapped = "BASIC"
+                        elif http_scheme == "bearer":
+                            mapped = "BEARER"
 
                     if mapped:
                         scheme_auths.add(mapped)
+                        if mapped == "BEARER":
+                            scheme_auths.add("TOKEN")
 
                 if normalized_auth and normalized_auth in allowed:
                     if normalized_auth not in scheme_auths:
@@ -750,10 +1074,69 @@ def _run_security_stage(
                     )
 
     elif request.protocol == Protocol.SOAP:
-        # Sprint 2 simplification: WSDL security is complex; Rule 1 is enough for now.
-        pass
+        if not isinstance(parsed_spec, ET.Element):
+            errors.append(
+                ValidationErrorDetail(
+                    code="SECURITY_SPEC_UNAVAILABLE",
+                    message="Parsed WSDL document is unavailable for security validation.",
+                    path=None,
+                    stage=stage,
+                )
+            )
+        else:
+            has_any_security, soap_methods = _extract_soap_security_signals(parsed_spec)
 
-    status = ValidationStatus.PASS if not errors else ValidationStatus.FAIL
+            if not has_any_security:
+                # Decision 1: no WS-Policy / token / HTTPS transport at all -> block,
+                # mirroring REST's requirement that security be declared in the spec.
+                errors.append(
+                    ValidationErrorDetail(
+                        code="SECURITY_REQUIREMENT_MISSING",
+                        message=(
+                            "WSDL declares no security: no WS-SecurityPolicy assertions, "
+                            "security tokens, or HTTPS transport were found."
+                        ),
+                        path="wsdl:binding",
+                        stage=stage,
+                    )
+                )
+            elif normalized_auth in {"BASIC", "MTLS"}:
+                # Strongly detectable in WSDL: require matching evidence (blocking).
+                if normalized_auth not in soap_methods:
+                    expected = (
+                        "UsernameToken"
+                        if normalized_auth == "BASIC"
+                        else "X509Token / TransportBinding / HTTPS transport"
+                    )
+                    errors.append(
+                        ValidationErrorDetail(
+                            code="SECURITY_AUTH_METADATA_MISMATCH",
+                            message=(
+                                f"Metadata auth_method '{request.auth_method}' is not reflected "
+                                f"by the WSDL security policy (expected {expected})."
+                            ),
+                            path="wsdl:binding",
+                            stage=stage,
+                        )
+                    )
+            elif normalized_auth in {"OAUTH2", "API_KEY"}:
+                # Decision 2: not reliably declared in WSDL -> warn, don't block.
+                if normalized_auth not in soap_methods:
+                    errors.append(
+                        ValidationErrorDetail(
+                            code="SECURITY_AUTH_UNVERIFIABLE",
+                            message=(
+                                f"Metadata auth_method '{request.auth_method}' cannot be "
+                                f"verified from the WSDL: SOAP has no standard place to "
+                                f"declare it. Manual confirmation recommended."
+                            ),
+                            path="wsdl:binding",
+                            severity="warning",
+                            stage=stage,
+                        )
+                    )
+
+    status = ValidationStatus.FAIL if _has_blocking(errors) else ValidationStatus.PASS
     return status, errors
 
 

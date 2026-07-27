@@ -2,13 +2,16 @@ from app.lifecycle.enums import (
     ApiStatus,
     ApiVersionStatus,
     LifecycleAction,
+    VersionEventType,
     ValidationOverallStatus,
     ValidationStage,
     ValidationStageStatus,
 )
 from app.lifecycle.exceptions import (
     ApiNotFoundError,
+    ApiPermissionError,
     CurrentVersionNotFoundError,
+    CurrentValidationRunNotFoundError,
     InvalidStatusTransitionError,
 )
 from app.lifecycle.postgres_repository import PostgresLifecycleRepository
@@ -23,11 +26,14 @@ from app.lifecycle.state_machine import (
 __all__ = [
     "ALLOWED_TRANSITIONS",
     "ApiNotFoundError",
+    "ApiPermissionError",
     "ApiStatus",
     "ApiVersionStatus",
     "CurrentVersionNotFoundError",
+    "CurrentValidationRunNotFoundError",
     "InvalidStatusTransitionError",
     "LifecycleAction",
+    "VersionEventType",
     "LifecycleResult",
     "LifecycleService",
     "PostgresLifecycleRepository",
