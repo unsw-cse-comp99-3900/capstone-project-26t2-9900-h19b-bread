@@ -17,6 +17,7 @@ from app.schemas.submission_schema import (
 )
 from app.schemas.validation_schema import ValidationRequest
 from app.services.validation_service import validate_specification
+from app.services.schema_mapping.spec_schema_extractor import sync_api_schemas_from_spec
 
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
@@ -87,12 +88,19 @@ def map_spec_type(protocol_type: str) -> str:
 
 def map_auth_method(auth_method: str) -> str:
     auth_method_value = auth_method.strip().upper().replace(" ", "_").replace("-", "_")
+    auth_method_value = auth_method_value.replace(".", "_")
 
-    if auth_method_value in {"OAUTH_2", "OAUTH2"}:
+    if auth_method_value in {"OAUTH_2", "OAUTH2", "OAUTH_2_0"}:
         return "OAUTH2"
 
     if auth_method_value in {"APIKEY", "API_KEY"}:
         return "API_KEY"
+
+    if auth_method_value in {"BASIC", "BASIC_AUTHENTICATION", "BASIC_AUTH"}:
+        return "BASIC"
+
+    if auth_method_value in {"MTLS", "MUTUAL_TLS"}:
+        return "MTLS"
 
     allowed_methods = {
         "OAUTH2",
@@ -308,6 +316,16 @@ def create_submission_records(
                     spec_url,
                     request.spec_content,
                 ),
+            )
+
+            sync_api_schemas_from_spec(
+                cursor,
+                api_id=api_id,
+                version_id=version_id,
+                spec_type=spec_type,
+                spec_content=request.spec_content,
+                input_format=request.input_format,
+                output_format=request.output_format,
             )
 
             cursor.execute(

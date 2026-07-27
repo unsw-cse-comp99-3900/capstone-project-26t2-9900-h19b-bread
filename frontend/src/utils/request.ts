@@ -19,6 +19,9 @@ request.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const token = localStorage.getItem('token');
     if (token) config.headers.Authorization = `Bearer ${token}`;
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+      delete config.headers['Content-Type'];
+    }
     return config;
   },
   (error: AxiosError) => Promise.reject(error),
@@ -61,6 +64,11 @@ export function apiGet<T>(url: string): Promise<T> {
 /** Typed POST helper — avoids `as unknown as` in every service file. */
 export function apiPost<T>(url: string, data?: unknown): Promise<T> {
   return request.post(url, data) as unknown as Promise<T>;
+}
+
+/** Typed PUT helper — avoids `as unknown as` in every service file. */
+export function apiPut<T>(url: string, data?: unknown): Promise<T> {
+  return request.put(url, data) as unknown as Promise<T>;
 }
 
 export default request;

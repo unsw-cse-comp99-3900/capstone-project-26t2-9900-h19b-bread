@@ -5,7 +5,7 @@ from app.lifecycle.exceptions import InvalidStatusTransitionError
 ALLOWED_TRANSITIONS: dict[ApiStatus, set[ApiStatus]] = {
     ApiStatus.DRAFT: {ApiStatus.VALIDATING},
     ApiStatus.VALIDATING: {ApiStatus.PUBLISHED, ApiStatus.REJECTED},
-    ApiStatus.REJECTED: {ApiStatus.VALIDATING},
+    ApiStatus.REJECTED: {ApiStatus.VALIDATING, ApiStatus.WITHDRAWN},
     ApiStatus.PUBLISHED: {ApiStatus.WITHDRAWN},
     ApiStatus.WITHDRAWN: set(),
 }

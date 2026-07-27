@@ -1,28 +1,31 @@
-// ─── Design tokens (mirrors Homepage palette) ─────────────────────────────────
-$primary:      #1677ff;
-$primary-dark: #0a3d8f;
+// ─── Design tokens (aligned with platform theme) ──────────────────────────────
+$primary:      #1a6fd4;
+$primary-dark: #0b2d5c;
 $success:      #52c41a;
 $error:        #ff4d4f;
-$border:       #e8e8e8;
-$bg:           #f0f2f5;
-$text:         #141414;
-$text-sub:     #595959;
-$text-muted:   #8c8c8c;
+$border:       rgba(19, 74, 138, 0.12);
+$bg:           #e8eef6;
+$text:         #152238;
+$text-sub:     #5a6b82;
+$text-muted:   #8a97a8;
 
 // ─── Modal ────────────────────────────────────────────────────────────────────
 .apif-modal {
   .ant-modal-content {
-    border-radius: 10px;
+    border-radius: 16px;
     overflow: visible;
     padding: 0;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(14px);
+    box-shadow: 0 16px 48px rgba(15, 45, 90, 0.18);
+    border: 1px solid rgba(255, 255, 255, 0.55);
   }
 
   .ant-modal-header {
-    background: linear-gradient(135deg, $primary-dark 0%, $primary 100%);
+    background: linear-gradient(135deg, $primary-dark 0%, #134a8a 55%, $primary 100%);
     padding: 18px 24px;
     margin-bottom: 0;
-    border-radius: 10px 10px 0 0;
+    border-radius: 16px 16px 0 0;
   }
 
   .ant-modal-title {

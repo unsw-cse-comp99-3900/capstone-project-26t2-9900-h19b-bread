@@ -71,3 +71,49 @@ class TransformPreviewResponse(BaseModel):
     mapping: dict[str, Any]
     comparison: dict[str, Any]
     transform_code: str
+
+
+class ApiSchemaSummary(BaseModel):
+    schema_id: int
+    api_id: int
+    api_name: str
+    version_id: int
+    version_number: str
+    direction: str
+    format: str
+    source_key: str
+    source_path: str | None = None
+    source_method: str | None = None
+    media_type: str | None = None
+    status_code: str | None = None
+    schema_version: int
+    created_at: str
+    schema_definition: dict[str, Any]
+
+
+class ApiSchemaCompareRequest(BaseModel):
+    source_schema_id: int
+    target_schema_id: int
+    save_mapping: bool = True
+
+
+class ApiSchemaCompareResponse(BaseModel):
+    source_schema: ApiSchemaSummary
+    target_schema: ApiSchemaSummary
+    comparison_result_id: int | None = None
+    mapping_id: int | None = None
+    comparison: SchemaCompareResponse
+    mapping: dict[str, Any]
+
+
+class ApiSchemaTransformPreviewRequest(BaseModel):
+    mapping_id: int
+    data: dict[str, Any]
+    format: Literal["json", "xml"] = "json"
+    save_run: bool = True
+
+
+class ApiSchemaTransformPreviewResponse(TransformPreviewResponse):
+    transform_run_id: int | None = None
+    comparison_result_id: int | None = None
+    mapping_id: int

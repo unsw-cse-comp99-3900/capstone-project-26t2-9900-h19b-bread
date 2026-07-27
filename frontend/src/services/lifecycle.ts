@@ -27,3 +27,25 @@ export function withdrawApi(apiId: number | string, data: WithdrawRequest): Prom
 export function getApiStatus(apiId: number | string): Promise<ApiStatusResponse> {
   return apiGet<ApiStatusResponse>(`/api/apis/${apiId}/status`);
 }
+
+export interface SubmitApiRequest {
+  protocol?:     string;
+  spec_content?: string;
+}
+
+export interface SubmitApiResponse {
+  api_id:             number;
+  status:             string;
+  message:            string;
+  updated_at?:        string;
+  action?:            string;
+  version_id?:        number;
+  validation_run_id?: number;
+}
+
+export function submitApi(
+  apiId: number | string,
+  data: SubmitApiRequest = {},
+): Promise<SubmitApiResponse> {
+  return apiPost<SubmitApiResponse>(`/api/apis/${apiId}/submit`, data);
+}

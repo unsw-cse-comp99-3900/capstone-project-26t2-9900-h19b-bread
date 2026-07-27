@@ -2,7 +2,7 @@
   position: fixed;
   inset: 0;
   display: flex;
-  background: #001529;
+  background: #0b2d5c;
 
   // ─── Left Brand Panel ────────────────────────────────────────────────────
   &__brand {
@@ -11,7 +11,7 @@
     flex-direction: column;
     justify-content: center;
     padding: 0 48px;
-    background: linear-gradient(170deg, #001529 0%, #003a70 100%);
+    background: linear-gradient(170deg, #0b2d5c 0%, #134a8a 100%);
     border-right: 1px solid rgba(255, 255, 255, 0.07);
     position: relative;
     overflow: hidden;
@@ -24,7 +24,7 @@
       width: 300px;
       height: 300px;
       border-radius: 50%;
-      background: rgba(22, 119, 255, 0.1);
+      background: rgba(26, 111, 212, 0.16);
       pointer-events: none;
     }
   }
@@ -32,14 +32,16 @@
   &__logo-icon {
     width: 44px;
     height: 44px;
-    background: #1677ff;
-    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 22px;
     color: #fff;
     margin-bottom: 20px;
+    backdrop-filter: blur(8px);
   }
 
   &__sys-name {
@@ -64,34 +66,38 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #f0f2f5;
+    background:
+      radial-gradient(900px 500px at 80% 20%, rgba(26, 111, 212, 0.12), transparent 55%),
+      linear-gradient(160deg, #e8eef6 0%, #f4f7fb 50%, #e9f0f8 100%);
   }
 
   &__card {
     width: 360px;
-    background: #fff;
-    border: 1px solid #e0e0e0;
-    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    border-radius: 16px;
     padding: 36px 32px 28px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.07);
+    box-shadow: 0 8px 32px rgba(15, 45, 90, 0.08);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
   }
 
   &__form-header {
     margin-bottom: 24px;
     padding-bottom: 18px;
-    border-bottom: 1px solid #f0f0f0;
+    border-bottom: 1px solid rgba(19, 74, 138, 0.08);
   }
 
   &__form-title {
     font-size: 17px !important;
     font-weight: 700 !important;
-    color: #141414 !important;
+    color: #152238 !important;
     margin: 0 0 4px !important;
   }
 
   &__form-subtitle {
     font-size: 12px;
-    color: #bfbfbf;
+    color: #8a97a8;
   }
 
   &__form-footer {
@@ -105,7 +111,7 @@
 .login-root .ant-form-item-label > label {
   font-size: 11px;
   font-weight: 600;
-  color: #595959;
+  color: #5a6b82;
   letter-spacing: 0.07em;
   text-transform: uppercase;
 }
@@ -116,6 +122,6 @@
     display: none;
   }
   .login-root__form-panel {
-    background: #001529;
+    background: linear-gradient(160deg, #0b2d5c 0%, #134a8a 100%);
   }
 }
