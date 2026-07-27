@@ -202,6 +202,12 @@
     flex-wrap: wrap;
   }
 
+  &__header-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
   &__title {
     margin: 0 0 4px !important;
     font-size: 18px !important;

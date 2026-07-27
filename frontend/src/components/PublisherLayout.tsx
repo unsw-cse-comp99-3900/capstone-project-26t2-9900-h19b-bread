@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Layout, Menu, Button, Avatar, Divider, Tooltip } from 'antd';
 import {
   UserOutlined,
@@ -13,6 +13,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import { logout } from '../store/authSlice';
+import { fetchAuthors } from '../store/authorsSlice';
 import type { RootState, AppDispatch } from '../store';
 import '../pages/Homepage/Homepage.scss';
 
@@ -35,6 +36,14 @@ const PublisherLayout: React.FC<Props> = ({ children, activeNav = 'publisher' })
   const navigate = useNavigate();
   const dispatch = useDispatch<AppDispatch>();
   const user = useSelector((s: RootState) => s.auth.user);
+  const token = useSelector((s: RootState) => s.auth.token);
+  const authorsStatus = useSelector((s: RootState) => s.authors.status);
+
+  useEffect(() => {
+    if (token && authorsStatus === 'idle') {
+      void dispatch(fetchAuthors());
+    }
+  }, [token, authorsStatus, dispatch]);
 
   const handleLogout = () => {
     dispatch(logout());

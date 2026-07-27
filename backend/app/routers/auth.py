@@ -20,9 +20,14 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(request: LoginRequest) -> LoginResponse:
     password_hash = hash_password(request.password)
+    normalized_email = normalize_email(request.email)
 
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -38,7 +43,7 @@ def login(request: LoginRequest) -> LoginResponse:
                 FROM app_user
                 WHERE email = %s;
                 """,
-                (request.email,),
+                (normalized_email,),
             )
             row = cursor.fetchone()
 
@@ -89,6 +94,7 @@ def login(request: LoginRequest) -> LoginResponse:
 @router.post("/register", response_model=RegisterResponse)
 def register(request: RegisterRequest) -> RegisterResponse:
     password_hash = hash_password(request.password)
+    normalized_email = normalize_email(request.email)
 
     try:
         with get_connection() as connection:
@@ -109,7 +115,7 @@ def register(request: RegisterRequest) -> RegisterResponse:
                     (
                         request.enterprise_id,
                         request.name,
-                        request.email,
+                        normalized_email,
                         password_hash,
                         request.role,
                     ),
