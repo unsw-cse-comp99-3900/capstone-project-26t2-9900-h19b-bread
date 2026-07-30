@@ -120,6 +120,30 @@ def test_multi_format_pair_uses_non_terminal_compatible_output():
     ]
 
 
+def test_same_api_different_versions_passes_eligibility():
+    context = _context(
+        source=EndpointVersion(1, 10, "PUBLISHED", [], ["JSON"]),
+        target=EndpointVersion(1, 20, "PUBLISHED", ["JSON"], []),
+    )
+
+    decision = _pipeline().run(context)
+
+    assert decision.activation_allowed is True
+    assert decision.stages[0].status == ConnectionValidationStageStatus.PASSED
+
+
+def test_same_version_is_rejected_during_eligibility():
+    context = _context(
+        target=EndpointVersion(1, 10, "PUBLISHED", ["JSON"], []),
+    )
+
+    decision = _pipeline().run(context)
+
+    assert decision.activation_allowed is False
+    assert decision.reason_code == "SOURCE_TARGET_SAME_VERSION"
+    assert decision.stages[0].status == ConnectionValidationStageStatus.FAILED
+
+
 def test_multi_format_pair_ignores_unknown_format_when_known_path_exists():
     context = _context(
         source=EndpointVersion(1, 10, "PUBLISHED", [], ["Custom", "JSON"]),

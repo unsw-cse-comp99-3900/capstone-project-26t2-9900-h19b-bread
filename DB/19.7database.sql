@@ -569,7 +569,7 @@ CREATE TABLE compatibility_result (
     full_result            JSONB,
     created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT chk_compat_not_same_api CHECK (source_api_id <> target_api_id),
+    CONSTRAINT chk_compat_not_same_version CHECK (source_version_id <> target_version_id),
     CONSTRAINT chk_compat_reason_code CHECK (reason_code ~ '^[A-Z][A-Z0-9_]*$'),
     CONSTRAINT uq_compat_version_pair UNIQUE (source_version_id, target_version_id),
     CONSTRAINT fk_compat_source_api
@@ -637,7 +637,7 @@ CREATE TABLE connection_validation_run (
     started_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at           TIMESTAMP,
 
-    CONSTRAINT chk_connection_run_not_same_api CHECK (source_api_id <> target_api_id),
+    CONSTRAINT chk_connection_run_not_same_version CHECK (source_version_id <> target_version_id),
     CONSTRAINT chk_connection_run_completion CHECK (
         (status = 'RUNNING' AND completed_at IS NULL)
         OR (status <> 'RUNNING' AND completed_at IS NOT NULL)
@@ -707,7 +707,7 @@ CREATE TABLE schema_mapping (
     created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT chk_schema_mapping_not_same_api CHECK (source_api_id <> target_api_id),
+    CONSTRAINT chk_schema_mapping_not_same_version CHECK (source_version_id <> target_version_id),
     CONSTRAINT chk_active_mapping_complete CHECK (
         lifecycle_status <> 'ACTIVE' OR completeness = 'FULL'
     ),

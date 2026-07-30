@@ -139,7 +139,7 @@ def test_connection_validation_endpoint_returns_conflict_for_invalid_pair():
     class ConflictService(FakeService):
         def validate(self, request, *, actor_id, enterprise_id, is_admin=False):
             raise ConnectionValidationConflictError(
-                "Source and target must be different APIs."
+                "Source and target must be different versions."
             )
 
     app.dependency_overrides[get_connection_validation_service] = lambda: ConflictService()
@@ -165,7 +165,7 @@ def test_connection_validation_endpoint_returns_conflict_for_invalid_pair():
         app.dependency_overrides.clear()
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "Source and target must be different APIs."
+    assert response.json()["detail"] == "Source and target must be different versions."
 
 
 def test_connection_validation_endpoint_returns_machine_readable_not_found_code():

@@ -72,7 +72,16 @@ class FakeRepository:
         self.list_runs_args = None
 
     def get_version(self, api_id, version_id):
-        return {(1, 10): self.source, (2, 20): self.target}.get((api_id, version_id))
+        return next(
+            (
+                endpoint
+                for endpoint in (self.source, self.target)
+                if endpoint is not None
+                and endpoint.api_id == api_id
+                and endpoint.version_id == version_id
+            ),
+            None,
+        )
 
     def assert_actor_can_validate(self, *args):
         return None
@@ -167,7 +176,7 @@ def test_service_rejects_unknown_version_before_creating_run():
     assert repository.saved is None
 
 
-def test_service_rejects_same_api_pair_before_creating_run():
+def test_service_rejects_same_version_pair_before_creating_run():
     repository = FakeRepository()
     repository.target = repository.source
     service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
@@ -179,11 +188,29 @@ def test_service_rejects_same_api_pair_before_creating_run():
         sample_data={"id": "INV-1"},
     )
 
-    with pytest.raises(ConnectionValidationConflictError, match="different APIs"):
+    with pytest.raises(ConnectionValidationConflictError, match="different versions"):
         service.validate(request, actor_id=5, enterprise_id=9)
 
     assert repository.saved is None
     assert repository.prepared == []
+
+
+def test_service_allows_same_api_with_different_versions():
+    repository = FakeRepository()
+    repository.target = EndpointVersion(1, 20, "PUBLISHED", ["JSON"], [])
+    service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
+    request = ConnectionValidationRequest(
+        source_api_id=1,
+        source_version_id=10,
+        target_api_id=1,
+        target_version_id=20,
+        sample_data={"id": "INV-1"},
+    )
+
+    response = service.validate(request, actor_id=5, enterprise_id=9)
+
+    assert response.activation_allowed is True
+    assert repository.saved is not None
 
 
 def test_service_cancels_run_when_pipeline_raises():

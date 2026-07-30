@@ -149,11 +149,11 @@ class ConnectionValidationPipeline:
         )
 
     def _eligibility(self, context: ConnectionValidationContext) -> StageResult:
-        if context.source.api_id == context.target.api_id:
+        if context.source.version_id == context.target.version_id:
             return self._stage_failure(
                 ConnectionValidationStage.ELIGIBILITY,
-                "SOURCE_TARGET_SAME_API",
-                "Source and target must be different APIs.",
+                "SOURCE_TARGET_SAME_VERSION",
+                "Source and target must be different versions.",
             )
         if context.source.status != "PUBLISHED":
             return self._stage_failure(

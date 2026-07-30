@@ -470,6 +470,51 @@ def test_compare_database_api_schemas_enforces_output_to_input(monkeypatch):
         raise AssertionError("Expected INPUT source schema to be rejected.")
 
 
+def test_compare_database_api_schemas_allows_same_api_different_versions(monkeypatch):
+    class FakeRepository:
+        def get_api_schema(self, schema_id):
+            is_source = schema_id == 101
+            return {
+                "schema_id": schema_id,
+                "api_id": 1,
+                "api_name": "Versioned API",
+                "version_id": 10 if is_source else 20,
+                "api_status": "PUBLISHED",
+                "version_status": "PUBLISHED",
+                "direction": "OUTPUT" if is_source else "INPUT",
+                "format": "JSON",
+                "schema_definition": _object_schema({"id": _field("string")}),
+            }
+
+    monkeypatch.setattr(schema_mapping_service, "repository", FakeRepository())
+
+    result = compare_database_api_schemas(101, 202, save_mapping=False)
+
+    assert result["comparison"]["compatibility"] == "directly_compatible"
+
+
+def test_compare_database_api_schemas_rejects_same_version(monkeypatch):
+    class FakeRepository:
+        def get_api_schema(self, schema_id):
+            is_source = schema_id == 101
+            return {
+                "schema_id": schema_id,
+                "api_id": 1,
+                "api_name": "Versioned API",
+                "version_id": 10,
+                "api_status": "PUBLISHED",
+                "version_status": "PUBLISHED",
+                "direction": "OUTPUT" if is_source else "INPUT",
+                "format": "JSON",
+                "schema_definition": _object_schema({"id": _field("string")}),
+            }
+
+    monkeypatch.setattr(schema_mapping_service, "repository", FakeRepository())
+
+    with pytest.raises(SchemaMappingError, match="different versions"):
+        compare_database_api_schemas(101, 202, save_mapping=False)
+
+
 def test_transform_database_mapping_validates_target_and_records_failure(monkeypatch):
     class FakeRepository:
         saved = None

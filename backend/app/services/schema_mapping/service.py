@@ -162,8 +162,8 @@ def compare_database_api_schemas(
         or target_schema.get("version_status") != "PUBLISHED"
     ):
         raise SchemaMappingError("Schema mapping is only available for published APIs.")
-    if source_schema["api_id"] == target_schema["api_id"]:
-        raise SchemaMappingError("Source and target schemas must belong to different APIs.")
+    if source_schema["version_id"] == target_schema["version_id"]:
+        raise SchemaMappingError("Source and target schemas must belong to different versions.")
     if source_schema["direction"] != "OUTPUT":
         raise SchemaMappingError("Source schema must have OUTPUT direction.")
     if target_schema["direction"] != "INPUT":
