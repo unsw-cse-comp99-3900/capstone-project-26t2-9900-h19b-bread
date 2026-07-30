@@ -135,6 +135,24 @@ def test_transform_preview_casts_and_renames_without_database():
     assert "transform_sourceapi_to_targetapi" in result["transform_code"]
 
 
+def test_transform_preview_uses_target_xml_root():
+    source = _object_schema({"id": _field("string")})
+    target = {
+        "root": "Invoice",
+        "schema": _object_schema({"id": _field("string")}),
+    }
+
+    result = transform_preview(
+        source_schema=source,
+        target_schema=target,
+        data={"id": "INV-1"},
+        output_format="xml",
+    )
+
+    assert result["result"].startswith("<Invoice>")
+    assert "<id>INV-1</id>" in result["result"]
+
+
 def test_transformer_supports_persisted_slash_field_paths():
     mapping = SchemaMapping(
         source="Source",
@@ -493,6 +511,65 @@ def test_transform_database_mapping_validates_target_and_records_failure(monkeyp
 
     assert fake.saved["success"] is False
     assert fake.saved["error_message"]
+
+
+def test_transform_database_mapping_uses_target_xml_root(monkeypatch):
+    class FakeRepository:
+        saved = None
+
+        def get_mapping(self, mapping_id):
+            mapping = SchemaMapping(
+                source="Source",
+                target="Target",
+                status="full",
+                fields=[
+                    FieldMapping(
+                        source_path="id",
+                        target_path="id",
+                        transform="rename",
+                        source_type="string",
+                        target_type="string",
+                        confidence="high",
+                        note="Direct copy for test.",
+                    )
+                ],
+            )
+            schema = _object_schema({"id": _field("string")})
+            return {
+                "row": {
+                    "mapping_id": mapping_id,
+                    "source_api_id": 1,
+                    "target_api_id": 2,
+                    "source_schema_id": 101,
+                    "target_schema_id": 202,
+                    "source_version_id": 10,
+                    "target_version_id": 20,
+                    "compatibility_result_id": None,
+                },
+                "source_schema": {"schema_definition": schema},
+                "target_schema": {
+                    "schema_definition": schema,
+                    "source_path": "Invoice",
+                },
+                "mapping": mapping,
+                "comparison": {},
+            }
+
+        def save_transform_run(self, **kwargs):
+            self.saved = kwargs
+            return 55
+
+    fake = FakeRepository()
+    monkeypatch.setattr(schema_mapping_service, "repository", fake)
+
+    result = transform_database_mapping_preview(
+        7,
+        {"id": "INV-1"},
+        output_format="xml",
+    )
+
+    assert result["result"].startswith("<Invoice>")
+    assert fake.saved["output_data"] == result["result"]
 
 
 def test_mapping_rule_update_recomputes_completeness_and_requires_revalidation(monkeypatch):

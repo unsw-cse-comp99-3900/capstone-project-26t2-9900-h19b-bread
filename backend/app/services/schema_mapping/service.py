@@ -102,7 +102,11 @@ def transform_preview(
 
     return {
         "result": (
-            transform_to_xml(lambda _: transformed_json, {}, root_tag="record")
+            transform_to_xml(
+                lambda _: transformed_json,
+                {},
+                root_tag=_target_xml_root(target_schema),
+            )
             if output_format == "xml"
             else transformed_json
         ),
@@ -226,7 +230,14 @@ def transform_database_mapping_preview(
         target_schema["schema_definition"],
     )
     result = (
-        transform_to_xml(lambda _: transformed_json, {}, root_tag="record")
+        transform_to_xml(
+            lambda _: transformed_json,
+            {},
+            root_tag=_target_xml_root(
+                target_schema["schema_definition"],
+                target_schema.get("source_path"),
+            ),
+        )
         if output_format == "xml"
         else transformed_json
     )
@@ -342,3 +353,19 @@ def _required_leaf_paths(schema: dict[str, Any], prefix: str = "") -> set[str]:
 def _canonical_path(path: str) -> str:
     cleaned = path.strip().lstrip("$./")
     return ".".join(part for part in re.split(r"[/.]+", cleaned) if part)
+
+
+def _target_xml_root(
+    schema: dict[str, Any],
+    source_path: str | None = None,
+) -> str:
+    candidates = (schema.get("xml_root"), schema.get("root"), source_path)
+    return next(
+        (
+            candidate
+            for candidate in candidates
+            if isinstance(candidate, str)
+            and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", candidate)
+        ),
+        "record",
+    )
