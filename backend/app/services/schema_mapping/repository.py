@@ -215,7 +215,8 @@ class PostgresSchemaMappingRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT lifecycle_status
+                    SELECT lifecycle_status, source_api_id, source_version_id,
+                           target_api_id, target_version_id
                     FROM schema_mapping
                     WHERE mapping_id = %s
                     FOR UPDATE
@@ -263,7 +264,26 @@ class PostgresSchemaMappingRepository:
                     """,
                     (completeness, mapping_id),
                 )
-                return cursor.fetchone()
+                updated = cursor.fetchone()
+                cursor.execute(
+                    """
+                    UPDATE connection_validation_run
+                    SET status = 'STALE',
+                        completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
+                    WHERE source_api_id = %s
+                      AND source_version_id = %s
+                      AND target_api_id = %s
+                      AND target_version_id = %s
+                      AND status = 'PASSED'
+                    """,
+                    (
+                        current["source_api_id"],
+                        current["source_version_id"],
+                        current["target_api_id"],
+                        current["target_version_id"],
+                    ),
+                )
+                return updated
 
     def get_mapping(self, mapping_id: int) -> dict[str, Any] | None:
         with self.connection_factory() as connection:

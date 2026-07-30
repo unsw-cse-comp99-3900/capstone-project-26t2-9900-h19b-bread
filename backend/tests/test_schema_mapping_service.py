@@ -208,6 +208,60 @@ def test_save_mapping_upserts_by_schema_pair_not_version_pair():
     assert ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'DRAFT', %s)" in insert_statement
 
 
+def test_replace_mapping_rules_stales_passed_runs_for_version_pair():
+    class SequenceCursor(_FakeCursor):
+        def __init__(self):
+            super().__init__()
+            self.rows = [
+                {
+                    "lifecycle_status": "ACTIVE",
+                    "source_api_id": 1,
+                    "source_version_id": 10,
+                    "target_api_id": 2,
+                    "target_version_id": 20,
+                },
+                {
+                    "mapping_id": 7,
+                    "lifecycle_status": "STALE",
+                    "completeness": "FULL",
+                    "updated_at": "2026-07-31T12:00:00",
+                },
+            ]
+
+        def fetchone(self):
+            return self.rows.pop(0)
+
+    cursor = SequenceCursor()
+    repository = PostgresSchemaMappingRepository(
+        connection_factory=lambda: _FakeConnection(cursor)
+    )
+
+    result = repository.replace_mapping_rules(
+        7,
+        [
+            FieldMapping(
+                source_path="Invoice/ID",
+                target_path="Invoice/ID",
+                transform="rename",
+                source_type="string",
+                target_type="string",
+                confidence="high",
+                note="Direct match",
+            )
+        ],
+        "FULL",
+    )
+
+    stale_statement = next(
+        (statement, params)
+        for statement, params in cursor.statements
+        if "UPDATE connection_validation_run" in statement
+    )
+    assert stale_statement[1] == (1, 10, 2, 20)
+    assert "status = 'PASSED'" in stale_statement[0]
+    assert result["lifecycle_status"] == "STALE"
+
+
 def test_list_api_schemas_only_returns_published_api_versions():
     cursor = _FakeCursor()
     repository = PostgresSchemaMappingRepository(
