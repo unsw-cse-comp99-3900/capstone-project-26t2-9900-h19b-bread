@@ -251,7 +251,19 @@ class PostgresLifecycleRepository:
                     UPDATE connection_validation_run
                     SET status = 'STALE',
                         completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
-                    WHERE status = 'PASSED'
+                    WHERE status IN ('RUNNING', 'PASSED')
+                      AND (
+                          (source_api_id = %s AND source_version_id <> %s)
+                          OR (target_api_id = %s AND target_version_id <> %s)
+                      )
+                    """,
+                    (api_id, published_version_id, api_id, published_version_id),
+                )
+                cursor.execute(
+                    """
+                    UPDATE schema_mapping
+                    SET lifecycle_status = 'STALE', updated_at = CURRENT_TIMESTAMP
+                    WHERE lifecycle_status IN ('ACTIVE', 'VALIDATING')
                       AND (
                           (source_api_id = %s AND source_version_id <> %s)
                           OR (target_api_id = %s AND target_version_id <> %s)

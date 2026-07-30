@@ -428,7 +428,7 @@ class PostgresConnectionValidationRepository:
 
                 self._save_stage_results(cursor, run_id, decision)
                 mapping_id = context.mapping.mapping_id if context.mapping else None
-                if is_latest and latest["status"] == "CANCELLED":
+                if is_latest and latest["status"] in {"CANCELLED", "STALE"}:
                     lifecycle_status = None
                     if mapping_id is not None:
                         cursor.execute(
@@ -443,7 +443,7 @@ class PostgresConnectionValidationRepository:
                         compatibility_result_id=None,
                         mapping_id=mapping_id,
                         lifecycle_status=lifecycle_status,
-                        is_latest_run=True,
+                        is_latest_run=latest["status"] != "STALE",
                     )
                 if not is_latest:
                     cursor.execute(
