@@ -8,10 +8,16 @@
 --                             api_version, api_version_event, api_specification
 --   B Catalogue Enrichment  : attributes on enterprise / submission / version /
 --                             auth_metadata (CSV / xlsx catalogue)
---   C Compatibility Engine  : api_schema, schema_field,
---                             compatibility_result, compatibility_issue
---   D Publish Validation    : validation_run, validation_result
---   E Mapping & Transform   : schema_mapping, mapping_rule, transform_run
+--   C Connection Compatibility : api_schema, schema_field (payload store, optional),
+--                                compatibility_result (API A.output → B.input check)
+--   D Publish Validation       : validation_run, validation_result
+--   E Mapping & Transform      : schema_mapping, mapping_rule, transform_run
+--
+-- Layer C (connection check) uses api_version metadata only:
+--   input_format / output_format / capability_category
+--   Result states: COMPATIBLE | INCOMPATIBLE | MISSING_INFORMATION (+ reason)
+--   Not field mapping; not deep payload processing; not single-API publish validation.
+--   Layer E remains optional and only weakly linked via compatibility_result_id.
 --
 -- ER rules applied in this revision:
 --   1) Every relationship has an explicit FK + ON DELETE policy
@@ -27,7 +33,7 @@
 -- ------------------------------------------------------------
 DROP TABLE IF EXISTS transform_run CASCADE;
 DROP TABLE IF EXISTS mapping_rule CASCADE;
-DROP TABLE IF EXISTS compatibility_issue CASCADE;
+DROP TABLE IF EXISTS compatibility_issue CASCADE;   -- removed in Layer C connection-check revision
 DROP TABLE IF EXISTS compatibility_result CASCADE;
 DROP TABLE IF EXISTS schema_field CASCADE;
 DROP TABLE IF EXISTS api_schema CASCADE;
@@ -66,8 +72,8 @@ DROP TYPE IF EXISTS transform_output_format CASCADE;
 DROP TYPE IF EXISTS transform_mapping_status CASCADE;
 DROP TYPE IF EXISTS field_transform_type CASCADE;
 DROP TYPE IF EXISTS confidence_level CASCADE;
-DROP TYPE IF EXISTS issue_kind_type CASCADE;
-DROP TYPE IF EXISTS issue_severity_type CASCADE;
+DROP TYPE IF EXISTS issue_kind_type CASCADE;        -- removed with compatibility_issue
+DROP TYPE IF EXISTS issue_severity_type CASCADE;    -- removed with compatibility_issue
 
 -- ============================================================
 -- ENUM TYPES
@@ -103,8 +109,9 @@ CREATE TYPE version_event_type AS ENUM (
 CREATE TYPE api_category_type AS ENUM ('TRANSFORMATION', 'VALIDATION', 'COMMUNICATION');
 CREATE TYPE schema_direction_type AS ENUM ('INPUT', 'OUTPUT');
 CREATE TYPE schema_payload_format AS ENUM ('JSON', 'XML');
+-- API-to-API connection check (A.output → B.input); not field-level mapping
 CREATE TYPE compatibility_level_type AS ENUM (
-    'DIRECTLY_COMPATIBLE', 'COMPATIBLE_WITH_MAPPING', 'INCOMPATIBLE'
+    'COMPATIBLE', 'INCOMPATIBLE', 'MISSING_INFORMATION'
 );
 
 -- lifecycle of a mapping package (ER Layer E overview)
@@ -123,10 +130,6 @@ CREATE TYPE confidence_level AS ENUM ('high', 'medium', 'low');
 CREATE TYPE transform_output_format AS ENUM ('JSON', 'XML');
 CREATE TYPE transform_mapping_status AS ENUM ('full', 'partial', 'incompatible');
 
--- From capstone compatibility_engine.py (kind / severity on issues)
-CREATE TYPE issue_kind_type AS ENUM ('blocking', 'mapping', 'info');
-CREATE TYPE issue_severity_type AS ENUM ('error', 'warning', 'information');
-
 -- Document custom types for DBeaver Data Types / ER diagrams
 COMMENT ON TYPE enterprise_status IS 'Custom DataType: enterprise lifecycle';
 COMMENT ON TYPE user_role IS 'Custom DataType: app_user role';
@@ -144,15 +147,13 @@ COMMENT ON TYPE version_event_type IS 'Custom DataType: version timeline event';
 COMMENT ON TYPE api_category_type IS 'Custom DataType from capstone: transformation/validation/communication';
 COMMENT ON TYPE schema_direction_type IS 'Custom DataType from capstone schemas.direction';
 COMMENT ON TYPE schema_payload_format IS 'Custom DataType from capstone schemas.format';
-COMMENT ON TYPE compatibility_level_type IS 'Custom DataType from capstone compatibility_level';
+COMMENT ON TYPE compatibility_level_type IS 'API connection check: COMPATIBLE / INCOMPATIBLE / MISSING_INFORMATION';
 COMMENT ON TYPE mapping_lifecycle_status IS 'Custom DataType: mapping package lifecycle';
 COMMENT ON TYPE mapping_completeness IS 'Custom DataType from mapping_engine.SchemaMapping.status';
 COMMENT ON TYPE field_transform_type IS 'Custom DataType from mapping_engine FieldMapping.transform';
 COMMENT ON TYPE confidence_level IS 'Custom DataType from mapping_engine FieldMapping.confidence';
 COMMENT ON TYPE transform_output_format IS 'Custom DataType from capstone transform_runs.output_format';
 COMMENT ON TYPE transform_mapping_status IS 'Custom DataType: transform mapping completeness';
-COMMENT ON TYPE issue_kind_type IS 'Custom DataType from compatibility_engine issue kind';
-COMMENT ON TYPE issue_severity_type IS 'Custom DataType from compatibility_engine issue severity';
 
 
 -- LAYER A — Identity & Publishing
@@ -241,12 +242,12 @@ CREATE TABLE api_version (
     endpoint_url           VARCHAR(1000) NOT NULL,
     protocol_type          api_protocol_type NOT NULL DEFAULT 'REST',
     category               api_category_type,
-    capability_category    VARCHAR(100),
+    capability_category    VARCHAR(100),               -- Layer C connection check
     description            TEXT,
-    input_format           VARCHAR(100),
-    output_format          VARCHAR(100),
+    input_format           VARCHAR(100),               -- Layer C: target accepts this
+    output_format          VARCHAR(100),               -- Layer C: source emits this
 
-    -- Layer B catalogue multi-value attributes
+    -- Layer B catalogue multi-value attributes (display); connection check uses singular fields above
     input_formats          JSONB NOT NULL DEFAULT '[]'::jsonb,
     output_formats         JSONB NOT NULL DEFAULT '[]'::jsonb,
     business_rules         JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -274,6 +275,9 @@ CREATE TABLE api_version (
 );
 
 COMMENT ON TABLE api_version IS 'ER Layer A/B: immutable version snapshot + catalogue fields; history axis for frontend';
+COMMENT ON COLUMN api_version.input_format IS 'Primary input format for connection check (API B.input)';
+COMMENT ON COLUMN api_version.output_format IS 'Primary output format for connection check (API A.output)';
+COMMENT ON COLUMN api_version.capability_category IS 'Capability label used in connection check';
 
 -- deferred 1:0..1 current version pointer
 ALTER TABLE api_submission
@@ -401,10 +405,12 @@ COMMENT ON TABLE validation_run IS 'ER Layer D: one publish-validation execution
 COMMENT ON TABLE validation_result IS 'ER Layer D: weak entity — one row per stage within a run';
 
 -- ============================================================
--- LAYER C — Compatibility Engine
+-- LAYER C — API Connection Compatibility (A.output → B.input)
+-- Metadata basis: api_version.input_format / output_format / capability_category
+-- api_schema / schema_field retained as optional payload store (not required to decide connectability)
 -- ============================================================
 
--- entity: api_schema (N:1 api + N:1 version)  [was: schemas]
+-- entity: api_schema (N:1 api + N:1 version)  [optional payload store]
 CREATE TABLE api_schema (
     schema_id              SERIAL PRIMARY KEY,
     api_id                 INT NOT NULL,
@@ -431,9 +437,9 @@ CREATE TABLE api_schema (
         ON DELETE CASCADE
 );
 
-COMMENT ON TABLE api_schema IS 'ER Layer C: INPUT/OUTPUT payload schema bound to api_version';
+COMMENT ON TABLE api_schema IS 'ER Layer C (optional): INPUT/OUTPUT payload schema bound to api_version; not used for connection decision';
 
--- entity: schema_field (weak N:1 api_schema)  [was: schema_fields]
+-- entity: schema_field (weak N:1 api_schema)  [optional field tree]
 CREATE TABLE schema_field (
     field_id               SERIAL PRIMARY KEY,
     schema_id              INT NOT NULL,
@@ -451,64 +457,50 @@ CREATE TABLE schema_field (
         ON DELETE CASCADE
 );
 
-COMMENT ON TABLE schema_field IS 'ER Layer C: extracted field tree for compare/matrix';
+COMMENT ON TABLE schema_field IS 'ER Layer C (optional): extracted field tree for display/mapping; not used for connection decision';
 
--- associative entity: compatibility_result  [was: compatibility_results]
+-- associative entity: compatibility_result — version-pair connection check
 CREATE TABLE compatibility_result (
     result_id              SERIAL PRIMARY KEY,
     source_api_id          INT NOT NULL,
     target_api_id          INT NOT NULL,
+    source_version_id      INT NOT NULL,
+    target_version_id      INT NOT NULL,
+    -- optional schema refs only (not required for connectability judgment)
     source_schema_id       INT,
     target_schema_id       INT,
-    source_version_id      INT,
-    target_version_id      INT,
     compatibility_level    compatibility_level_type NOT NULL,
+    reason                 TEXT NOT NULL,
     summary                JSONB,
     full_result            JSONB,
     created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT chk_compat_not_same_api CHECK (source_api_id <> target_api_id),
-    CONSTRAINT uq_compat_schema_pair UNIQUE (source_schema_id, target_schema_id),
+    CONSTRAINT uq_compat_version_pair UNIQUE (source_version_id, target_version_id),
     CONSTRAINT fk_compat_source_api
         FOREIGN KEY (source_api_id) REFERENCES api_submission (api_id)
         ON DELETE CASCADE,
     CONSTRAINT fk_compat_target_api
         FOREIGN KEY (target_api_id) REFERENCES api_submission (api_id)
         ON DELETE CASCADE,
+    CONSTRAINT fk_compat_source_version
+        FOREIGN KEY (source_version_id) REFERENCES api_version (version_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_compat_target_version
+        FOREIGN KEY (target_version_id) REFERENCES api_version (version_id)
+        ON DELETE CASCADE,
     CONSTRAINT fk_compat_source_schema
         FOREIGN KEY (source_schema_id) REFERENCES api_schema (schema_id)
         ON DELETE SET NULL,
     CONSTRAINT fk_compat_target_schema
         FOREIGN KEY (target_schema_id) REFERENCES api_schema (schema_id)
-        ON DELETE SET NULL,
-    CONSTRAINT fk_compat_source_version
-        FOREIGN KEY (source_version_id) REFERENCES api_version (version_id)
-        ON DELETE SET NULL,
-    CONSTRAINT fk_compat_target_version
-        FOREIGN KEY (target_version_id) REFERENCES api_version (version_id)
         ON DELETE SET NULL
 );
 
-COMMENT ON TABLE compatibility_result IS 'ER Layer C: associative entity source API/schema <-> target API/schema';
-
--- weak entity: compatibility_issue
-CREATE TABLE compatibility_issue (
-    issue_id               SERIAL PRIMARY KEY,
-    result_id              INT NOT NULL,
-    code                   VARCHAR(100) NOT NULL,
-    kind                   issue_kind_type NOT NULL,
-    severity               issue_severity_type NOT NULL,
-    source_path            VARCHAR(512),
-    target_path            VARCHAR(512),
-    message                TEXT NOT NULL,
-    suggestion             TEXT,
-
-    CONSTRAINT fk_issue_result
-        FOREIGN KEY (result_id) REFERENCES compatibility_result (result_id)
-        ON DELETE CASCADE
-);
-
-COMMENT ON TABLE compatibility_issue IS 'ER Layer C: issues belonging to one compatibility_result';
+COMMENT ON TABLE compatibility_result IS 'ER Layer C: API A.output → B.input connection check; keyed by version pair; reason required';
+COMMENT ON COLUMN compatibility_result.reason IS 'Human-readable explanation for UI (format / capability / missing metadata)';
+COMMENT ON COLUMN compatibility_result.source_schema_id IS 'Optional; connection check does not depend on schema compare';
+COMMENT ON COLUMN compatibility_result.target_schema_id IS 'Optional; connection check does not depend on schema compare';
 
 -- ============================================================
 -- LAYER E — Schema Mapping & Transform
@@ -523,7 +515,7 @@ CREATE TABLE schema_mapping (
     target_version_id      INT NOT NULL,
     source_schema_id       INT,
     target_schema_id       INT,
-    compatibility_result_id INT,                       -- optional link from compare → map
+    compatibility_result_id INT,                       -- optional weak link from connection check → map
     source_schema_format   schema_payload_format NOT NULL,
     target_schema_format   schema_payload_format NOT NULL,
     overview_note          TEXT,                       -- human summary only (NOT field rules)
@@ -558,7 +550,8 @@ CREATE TABLE schema_mapping (
         ON DELETE SET NULL
 );
 
-COMMENT ON TABLE schema_mapping IS 'ER Layer E: API-pair mapping overview; field rules are children in mapping_rule';
+COMMENT ON TABLE schema_mapping IS 'ER Layer E: API-pair mapping overview; optional weak FK to connection check; field rules in mapping_rule';
+COMMENT ON COLUMN schema_mapping.compatibility_result_id IS 'Optional; Layer E does not require Layer C field compare';
 
 -- weak entity: mapping_rule (N:1 schema_mapping)  [was: mapping_rules]
 -- Normalized: API/version identity comes from parent schema_mapping (no duplicate FKs)
@@ -661,7 +654,8 @@ CREATE INDEX idx_schema_field_path ON schema_field (field_path);
 
 CREATE INDEX idx_compat_source_api ON compatibility_result (source_api_id);
 CREATE INDEX idx_compat_target_api ON compatibility_result (target_api_id);
-CREATE INDEX idx_compat_issue_result ON compatibility_issue (result_id);
+CREATE INDEX idx_compat_source_version ON compatibility_result (source_version_id);
+CREATE INDEX idx_compat_target_version ON compatibility_result (target_version_id);
 
 CREATE INDEX idx_sm_source_api ON schema_mapping (source_api_id);
 CREATE INDEX idx_sm_target_api ON schema_mapping (target_api_id);
@@ -800,7 +794,7 @@ UPDATE api_submission SET current_version_id = 5 WHERE api_id = 3;
 INSERT INTO auth_metadata (api_id, version_id, auth_method, auth_method_raw, auth_description, is_complete)
 VALUES (3, 5, 'TOKEN', 'Token', 'JWT token authentication.', TRUE);
 
--- Layer C sample schemas
+-- Layer C: optional payload store (not used for connection decision)
 INSERT INTO api_schema (
     api_id, version_id, direction, format, source_key, source_path, source_method,
     media_type, status_code, raw_schema, normalized_schema, schema_version
@@ -823,32 +817,29 @@ INSERT INTO schema_field (schema_id, field_path, field_name, field_type, is_requ
 (2, 'Invoice/ID', 'ID', 'string', TRUE, 1, 'Invoice'),
 (2, 'Invoice/IssueDate', 'IssueDate', 'date', TRUE, 1, 'Invoice');
 
+-- Layer C: API-to-API connection check (A.output → B.input) — version pair + reason
+-- ESSAnalyse output "Validation Report" cannot feed OZEDI input "UBL"
 INSERT INTO compatibility_result (
-    source_api_id, target_api_id, source_schema_id, target_schema_id,
-    source_version_id, target_version_id, compatibility_level, summary, full_result
+    source_api_id, target_api_id, source_version_id, target_version_id,
+    source_schema_id, target_schema_id,
+    compatibility_level, reason, summary, full_result
 ) VALUES (
-    2, 3, 1, 2, 4, 5, 'COMPATIBLE_WITH_MAPPING',
-    '{"matched":2,"missing_on_target":1}'::jsonb,
-    '{"level":"compatible_with_mapping","notes":"PayableAmount missing on target."}'::jsonb
+    2, 3, 4, 5,
+    NULL, NULL,
+    'INCOMPATIBLE',
+    'Source output format (Validation Report) does not match target input format (UBL).',
+    '{"format_check":"fail","capability_check":"skipped"}'::jsonb,
+    '{"source_output":"Validation Report","target_input":"UBL","source_capability":"validation","target_capability":"communication"}'::jsonb
 );
 
-INSERT INTO compatibility_issue (
-    result_id, code, kind, severity, source_path, target_path, message, suggestion
-) VALUES (
-    1, 'MISSING_TARGET_FIELD', 'mapping', 'warning',
-    'Invoice/PayableAmount', NULL,
-    'Source field PayableAmount has no counterpart on target schema.',
-    'Add a mapping rule or provide a default value before transform.'
-);
-
--- Layer E: overview then field rules then transform
+-- Layer E: mapping package independent of connection check (weak coupling: no required FK)
 INSERT INTO schema_mapping (
     source_api_id, target_api_id, source_version_id, target_version_id,
     source_schema_id, target_schema_id, compatibility_result_id,
     source_schema_format, target_schema_format,
     overview_note, lifecycle_status, completeness
 ) VALUES (
-    2, 3, 4, 5, 1, 2, 1, 'XML', 'XML',
+    2, 3, 4, 5, 1, 2, NULL, 'XML', 'XML',
     'Map common Invoice header fields; drop or default PayableAmount.',
     'ACTIVE', 'PARTIAL'
 );
@@ -891,17 +882,27 @@ FROM api_version
 WHERE api_id = 1
 ORDER BY created_at;
 
--- E: mapping package with field rules (normalized join)
-SELECT sm.mapping_id, sm.completeness, sm.lifecycle_status,
+-- C: API-to-API connection check (version pair + reason)
+SELECT cr.result_id, cr.compatibility_level, cr.reason,
+       sv.api_name AS source_api, sv.output_format AS source_output,
+       tv.api_name AS target_api, tv.input_format AS target_input
+FROM compatibility_result cr
+JOIN api_version sv ON sv.version_id = cr.source_version_id
+JOIN api_version tv ON tv.version_id = cr.target_version_id
+WHERE cr.source_api_id = 2 AND cr.target_api_id = 3;
+
+-- E: mapping package with field rules (normalized join; independent of Layer C)
+SELECT sm.mapping_id, sm.completeness, sm.lifecycle_status, sm.compatibility_result_id,
        mr.source_field, mr.target_field, mr.transform_type, mr.confidence
 FROM schema_mapping sm
 JOIN mapping_rule mr ON mr.schema_mapping_id = sm.mapping_id
 WHERE sm.source_api_id = 2 AND sm.target_api_id = 3;
 
--- C→E flow: compatibility → mapping → transform
-SELECT cr.compatibility_level, sm.mapping_id, sm.completeness,
+-- Optional weak link: connection check ↔ mapping ↔ transform
+SELECT cr.compatibility_level, cr.reason, sm.mapping_id, sm.completeness,
        tr.transform_run_id, tr.success, tr.mapping_status
 FROM compatibility_result cr
-LEFT JOIN schema_mapping sm ON sm.compatibility_result_id = cr.result_id
+LEFT JOIN schema_mapping sm
+    ON sm.source_api_id = cr.source_api_id AND sm.target_api_id = cr.target_api_id
 LEFT JOIN transform_run tr ON tr.schema_mapping_id = sm.mapping_id
 WHERE cr.result_id = 1;
