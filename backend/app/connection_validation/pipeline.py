@@ -235,16 +235,28 @@ class ConnectionValidationPipeline:
             "unknown_source_formats": source_unknown,
             "unknown_target_formats": target_unknown,
         }
+        source_schema_format = context.source_schema.format.upper()
+        target_schema_format = context.target_schema.format.upper()
         if source_tokens & target_tokens or source_families & target_families:
+            requires_schema_format_transform = (
+                source_schema_format != target_schema_format
+            )
             return StageResult(
                 stage=ConnectionValidationStage.FORMAT_CHECK,
                 status=ConnectionValidationStageStatus.PASSED,
-                message="Source and target formats overlap after normalization.",
-                payload={"requires_format_transform": False, **diagnostics},
+                message=(
+                    "Version formats overlap, but the selected schemas require a format transform."
+                    if requires_schema_format_transform
+                    else "Source and target formats overlap after normalization."
+                ),
+                payload={
+                    "requires_format_transform": requires_schema_format_transform,
+                    "source_schema_format": source_schema_format,
+                    "target_schema_format": target_schema_format,
+                    **diagnostics,
+                },
             )
 
-        source_schema_format = context.source_schema.format.upper()
-        target_schema_format = context.target_schema.format.upper()
         has_machine_readable_path = all(
             any(
                 alias.family in MACHINE_READABLE_FORMAT_FAMILIES

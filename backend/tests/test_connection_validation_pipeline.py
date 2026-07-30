@@ -380,6 +380,39 @@ def test_supported_bridge_uses_machine_readable_option_from_mixed_formats():
     assert decision.stages[1].payload["requires_format_transform"] is True
 
 
+def test_selected_schema_formats_require_transform_despite_version_format_overlap():
+    source_schema = PayloadSchema(
+        schema_id=100,
+        direction="OUTPUT",
+        format="XML",
+        definition=_object_definition({"id": {"type": "string"}}),
+    )
+    target_schema = PayloadSchema(
+        schema_id=200,
+        direction="INPUT",
+        format="JSON",
+        definition=source_schema.definition,
+    )
+    context = _context(
+        source=EndpointVersion(1, 10, "PUBLISHED", [], ["JSON", "XML"]),
+        target=EndpointVersion(2, 20, "PUBLISHED", ["JSON", "XML"], []),
+        source_schema=source_schema,
+        target_schema=target_schema,
+        aliases=[
+            FormatAlias("JSON", "JSON", "JSON"),
+            FormatAlias("XML", "XML", "XML"),
+        ],
+    )
+
+    decision = _pipeline().run(context)
+
+    assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
+    assert decision.reason_code == "MAPPING_REQUIRED"
+    assert decision.stages[1].payload["requires_format_transform"] is True
+    assert decision.stages[1].payload["source_schema_format"] == "XML"
+    assert decision.stages[1].payload["target_schema_format"] == "JSON"
+
+
 def test_supported_bridge_materializes_target_xml_output():
     source_schema = _schema(100, "OUTPUT", {"id": {"type": "string"}})
     target_schema = PayloadSchema(
