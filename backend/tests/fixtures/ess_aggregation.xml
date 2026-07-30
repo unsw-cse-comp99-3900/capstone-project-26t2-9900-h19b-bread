@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<aggregation>
+  <id>agg-20240420-001</id>
+  <type>aggregation</type>
+
+  <event>
+    <time>2024-04-20T09:15:00Z</time>
+    <actor>data-pipeline-service</actor>
+    <agent>etl-agent-v2</agent>
+    <trigger>scheduled-daily-run</trigger>
+  </event>
+
+  <aggregate>
+    <language>SQL</language>
+    <expression>SUM(order_total) GROUP BY customer_id</expression>
+    <description>Calculates the total order value per customer across all transactions for the reporting period.</description>
+  </aggregate>
+
+  <data>
+    <source>orders_raw</source>
+    <source>customers_dim</source>
+    <source>products_fact</source>
+    <target>customer_summary_mart</target>
+    <target>reporting_dashboard_cache</target>
+    <description>Reads from raw orders and dimension tables, writes aggregated results to the customer summary data mart and refreshes the reporting cache.</description>
+  </data>
+
+  <value>1482937.56</value>
+</aggregation>
