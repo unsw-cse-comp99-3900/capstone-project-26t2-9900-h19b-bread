@@ -60,6 +60,7 @@ class ConnectionValidationPipeline:
         if (
             schema_result.status != ConnectionValidationStageStatus.PASSED
             and context.mapping is not None
+            and context.mapping.completeness == "FULL"
         ):
             schema_result = StageResult(
                 stage=ConnectionValidationStage.SCHEMA_CHECK,

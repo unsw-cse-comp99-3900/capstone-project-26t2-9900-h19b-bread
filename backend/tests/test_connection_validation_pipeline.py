@@ -333,6 +333,30 @@ def test_blocking_schema_conflict_without_mapping_remains_incompatible():
     assert decision.activation_allowed is False
 
 
+def test_blocking_schema_conflict_with_partial_mapping_remains_incompatible():
+    source_schema = _schema(100, "OUTPUT", {"source_only": {"type": "object"}})
+    target_schema = _schema(200, "INPUT", {"required_target": {"type": "array"}})
+    partial_mapping = MappingContext(
+        mapping_id=7,
+        lifecycle_status="VALIDATING",
+        completeness="PARTIAL",
+        transform=lambda data: data,
+    )
+
+    decision = _pipeline().run(
+        _context(
+            source_schema=source_schema,
+            target_schema=target_schema,
+            mapping=partial_mapping,
+            sample_data={"source_only": {}},
+        )
+    )
+
+    assert decision.compatibility_level == CompatibilityLevel.INCOMPATIBLE
+    assert decision.reason_code == "SCHEMA_INCOMPATIBLE"
+    assert decision.activation_allowed is False
+
+
 def test_missing_sample_blocks_activation_after_static_checks():
     decision = _pipeline().run(_context(sample_data=None))
 
