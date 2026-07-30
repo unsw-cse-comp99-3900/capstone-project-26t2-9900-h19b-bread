@@ -1,3 +1,5 @@
+import pytest
+
 import app.services.schema_mapping.service as schema_mapping_service
 from app.services.schema_mapping.mapping_engine import FieldMapping, SchemaMapping
 from app.services.schema_mapping.repository import PostgresSchemaMappingRepository
@@ -382,3 +384,134 @@ def test_mapping_rule_update_recomputes_completeness_and_requires_revalidation(m
     assert result["lifecycle_status"] == "STALE"
     assert result["revalidation_required"] is True
     assert result["missing_required_targets"] == ["amount"]
+
+
+def test_mapping_rule_update_treats_slash_and_dot_paths_as_equivalent(monkeypatch):
+    class FakeRepository:
+        completeness = None
+
+        def get_mapping(self, mapping_id):
+            return {
+                "row": {
+                    "mapping_id": mapping_id,
+                    "source_api_id": 1,
+                    "lifecycle_status": "ACTIVE",
+                },
+                "target_schema": {
+                    "schema_definition": _object_schema(
+                        {"Invoice": _object_schema({"ID": _field("string")})}
+                    )
+                },
+            }
+
+        def replace_mapping_rules(self, mapping_id, fields, completeness):
+            self.completeness = completeness
+            return {
+                "mapping_id": mapping_id,
+                "lifecycle_status": "STALE",
+                "completeness": completeness,
+                "updated_at": "2026-07-31T12:00:00",
+            }
+
+    fake = FakeRepository()
+    monkeypatch.setattr(schema_mapping_service, "repository", fake)
+
+    result = update_database_mapping_rules(
+        7,
+        [
+            {
+                "source_path": "Invoice/ID",
+                "target_path": "Invoice/ID",
+                "transform": "rename",
+            }
+        ],
+    )
+
+    assert fake.completeness == "FULL"
+    assert result["missing_required_targets"] == []
+
+
+def test_mapping_rule_update_rejects_equivalent_duplicate_paths(monkeypatch):
+    class FakeRepository:
+        def get_mapping(self, mapping_id):
+            return {
+                "row": {
+                    "mapping_id": mapping_id,
+                    "source_api_id": 1,
+                    "lifecycle_status": "DRAFT",
+                },
+                "target_schema": {
+                    "schema_definition": _object_schema(
+                        {"Invoice": _object_schema({"ID": _field("string")})}
+                    )
+                },
+            }
+
+    monkeypatch.setattr(schema_mapping_service, "repository", FakeRepository())
+
+    with pytest.raises(SchemaMappingError, match="at most one"):
+        update_database_mapping_rules(
+            7,
+            [
+                {
+                    "source_path": "Invoice/ID",
+                    "target_path": "Invoice/ID",
+                    "transform": "rename",
+                },
+                {
+                    "source_path": "Invoice.ID",
+                    "target_path": "Invoice.ID",
+                    "transform": "rename",
+                },
+            ],
+        )
+
+
+def test_mapping_rule_update_covers_required_array_item_paths(monkeypatch):
+    class FakeRepository:
+        completeness = None
+
+        def get_mapping(self, mapping_id):
+            return {
+                "row": {
+                    "mapping_id": mapping_id,
+                    "source_api_id": 1,
+                    "lifecycle_status": "DRAFT",
+                },
+                "target_schema": {
+                    "schema_definition": _object_schema(
+                        {
+                            "lines": {
+                                "type": "array",
+                                "items": _object_schema({"id": _field("string")}),
+                            }
+                        }
+                    )
+                },
+            }
+
+        def replace_mapping_rules(self, mapping_id, fields, completeness):
+            self.completeness = completeness
+            return {
+                "mapping_id": mapping_id,
+                "lifecycle_status": "DRAFT",
+                "completeness": completeness,
+                "updated_at": "2026-07-31T12:00:00",
+            }
+
+    fake = FakeRepository()
+    monkeypatch.setattr(schema_mapping_service, "repository", fake)
+
+    result = update_database_mapping_rules(
+        7,
+        [
+            {
+                "source_path": "lines[]/id",
+                "target_path": "lines[]/id",
+                "transform": "rename",
+            }
+        ],
+    )
+
+    assert fake.completeness == "FULL"
+    assert result["missing_required_targets"] == []

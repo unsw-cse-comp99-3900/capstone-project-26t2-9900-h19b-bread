@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from app.services.schema_mapping.compatibility_engine import compare_schemas
@@ -279,11 +280,11 @@ def update_database_mapping_rules(
 
     target_schema = mapping_detail["target_schema"]
     required_paths = _required_leaf_paths(target_schema["schema_definition"])
-    declared_targets = [rule["target_path"] for rule in rules]
+    declared_targets = [_canonical_path(rule["target_path"]) for rule in rules]
     if len(declared_targets) != len(set(declared_targets)):
         raise SchemaMappingError("Each target path may appear in at most one mapping rule.")
     target_paths = {
-        rule["target_path"]
+        _canonical_path(rule["target_path"])
         for rule in rules
         if rule["transform"] not in {"drop", "missing"}
     }
@@ -322,6 +323,10 @@ def _ensure_source_owner(
 
 
 def _required_leaf_paths(schema: dict[str, Any], prefix: str = "") -> set[str]:
+    if schema.get("type") == "array":
+        item_path = f"{prefix}[]" if prefix else "[]"
+        nested = _required_leaf_paths(schema.get("items") or {}, item_path)
+        return nested or {item_path}
     if schema.get("type") != "object":
         return {prefix} if prefix else set()
     paths: set[str] = set()
@@ -332,3 +337,8 @@ def _required_leaf_paths(schema: dict[str, Any], prefix: str = "") -> set[str]:
         nested = _required_leaf_paths(child, path)
         paths.update(nested or {path})
     return paths
+
+
+def _canonical_path(path: str) -> str:
+    cleaned = path.strip().lstrip("$./")
+    return ".".join(part for part in re.split(r"[/.]+", cleaned) if part)
