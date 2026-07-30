@@ -9,6 +9,8 @@ from app.services.schema_mapping.service import (
     infer_json_schema_from_sample,
     infer_xml_schema_from_sample,
     transform_preview,
+    transform_database_mapping_preview,
+    update_database_mapping_rules,
 )
 
 
@@ -177,6 +179,7 @@ def test_save_mapping_upserts_by_schema_pair_not_version_pair():
     assert mapping_id == 17
     assert "ON CONFLICT (source_schema_id, target_schema_id)" in insert_statement
     assert "ON CONFLICT (source_api_id, target_api_id, source_version_id, target_version_id)" not in insert_statement
+    assert ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'DRAFT', %s)" in insert_statement
 
 
 def test_list_api_schemas_only_returns_published_api_versions():
@@ -223,3 +226,135 @@ def test_compare_database_api_schemas_rejects_unpublished_schema(monkeypatch):
         assert "published APIs" in str(exc)
     else:
         raise AssertionError("Expected draft schema mapping to be rejected.")
+
+
+def test_compare_database_api_schemas_enforces_output_to_input(monkeypatch):
+    class FakeRepository:
+        def get_api_schema(self, schema_id):
+            return {
+                "schema_id": schema_id,
+                "api_id": 1 if schema_id == 101 else 2,
+                "api_name": "API",
+                "version_id": schema_id,
+                "api_status": "PUBLISHED",
+                "version_status": "PUBLISHED",
+                "direction": "INPUT",
+                "format": "JSON",
+                "schema_definition": _object_schema({"id": _field("string")}),
+            }
+
+    monkeypatch.setattr(schema_mapping_service, "repository", FakeRepository())
+
+    try:
+        compare_database_api_schemas(101, 202)
+    except SchemaMappingError as exc:
+        assert "OUTPUT direction" in str(exc)
+    else:
+        raise AssertionError("Expected INPUT source schema to be rejected.")
+
+
+def test_transform_database_mapping_validates_target_and_records_failure(monkeypatch):
+    class FakeRepository:
+        saved = None
+
+        def get_mapping(self, mapping_id):
+            mapping = SchemaMapping(
+                source="Source",
+                target="Target",
+                status="full",
+                fields=[
+                    FieldMapping(
+                        source_path="amount",
+                        target_path="amount",
+                        transform="rename",
+                        source_type="string",
+                        target_type="integer",
+                        confidence="high",
+                        note="Direct copy for test.",
+                    )
+                ],
+            )
+            return {
+                "row": {
+                    "mapping_id": mapping_id,
+                    "source_api_id": 1,
+                    "target_api_id": 2,
+                    "source_schema_id": 101,
+                    "target_schema_id": 202,
+                    "source_version_id": 10,
+                    "target_version_id": 20,
+                    "compatibility_result_id": None,
+                },
+                "source_schema": {
+                    "schema_definition": _object_schema({"amount": _field("string")})
+                },
+                "target_schema": {
+                    "schema_definition": _object_schema({"amount": _field("integer")})
+                },
+                "mapping": mapping,
+                "comparison": {},
+            }
+
+        def save_transform_run(self, **kwargs):
+            self.saved = kwargs
+            return 55
+
+    fake = FakeRepository()
+    monkeypatch.setattr(schema_mapping_service, "repository", fake)
+
+    try:
+        transform_database_mapping_preview(7, {"amount": "invalid"})
+    except SchemaMappingError as exc:
+        assert "Validation failed" in str(exc)
+    else:
+        raise AssertionError("Expected target validation to reject transformed output.")
+
+    assert fake.saved["success"] is False
+    assert fake.saved["error_message"]
+
+
+def test_mapping_rule_update_recomputes_completeness_and_requires_revalidation(monkeypatch):
+    class FakeRepository:
+        completeness = None
+
+        def get_mapping(self, mapping_id):
+            return {
+                "row": {
+                    "mapping_id": mapping_id,
+                    "source_api_id": 1,
+                    "lifecycle_status": "ACTIVE",
+                },
+                "target_schema": {
+                    "schema_definition": _object_schema(
+                        {"id": _field("string"), "amount": _field("number")}
+                    )
+                },
+            }
+
+        def replace_mapping_rules(self, mapping_id, fields, completeness):
+            self.completeness = completeness
+            return {
+                "mapping_id": mapping_id,
+                "lifecycle_status": "STALE",
+                "completeness": completeness,
+                "updated_at": "2026-07-30T12:00:00",
+            }
+
+    fake = FakeRepository()
+    monkeypatch.setattr(schema_mapping_service, "repository", fake)
+
+    result = update_database_mapping_rules(
+        7,
+        [
+            {
+                "source_path": "id",
+                "target_path": "id",
+                "transform": "rename",
+            }
+        ],
+    )
+
+    assert fake.completeness == "PARTIAL"
+    assert result["lifecycle_status"] == "STALE"
+    assert result["revalidation_required"] is True
+    assert result["missing_required_targets"] == ["amount"]

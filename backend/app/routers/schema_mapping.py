@@ -1,6 +1,8 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from app.core.security import get_current_user
 
 from app.schemas.schema_mapping_schema import (
     ApiSchemaCompareRequest,
@@ -12,6 +14,8 @@ from app.schemas.schema_mapping_schema import (
     InferXmlSchemaRequest,
     MatrixRequest,
     MatrixResponse,
+    MappingRulesUpdateRequest,
+    MappingRulesUpdateResponse,
     SchemaCompareRequest,
     SchemaCompareResponse,
     SchemaInferenceResponse,
@@ -21,6 +25,7 @@ from app.schemas.schema_mapping_schema import (
 )
 from app.services.schema_mapping.service import (
     SchemaMappingError,
+    SchemaMappingPermissionError,
     build_compatibility_matrix,
     compare_schema_pair,
     compare_database_api_schemas,
@@ -29,6 +34,7 @@ from app.services.schema_mapping.service import (
     list_database_api_schemas,
     transform_database_mapping_preview,
     transform_preview,
+    update_database_mapping_rules,
 )
 
 router = APIRouter(prefix="/schema-mapping", tags=["schema-mapping"])
@@ -36,6 +42,12 @@ router = APIRouter(prefix="/schema-mapping", tags=["schema-mapping"])
 
 def _bad_request(exc: SchemaMappingError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
+
+
+def _mapping_error(exc: SchemaMappingError) -> HTTPException:
+    if isinstance(exc, SchemaMappingPermissionError):
+        return HTTPException(status_code=403, detail=str(exc))
+    return _bad_request(exc)
 
 
 @router.post(
@@ -52,7 +64,7 @@ def compare_schemas_endpoint(request: SchemaCompareRequest) -> dict[str, Any]:
             target_name=request.target_name,
         )
     except SchemaMappingError as exc:
-        raise _bad_request(exc) from exc
+        raise _mapping_error(exc) from exc
 
 
 @router.get(
@@ -72,15 +84,20 @@ def list_api_schemas_endpoint() -> list[dict[str, Any]]:
     response_model=ApiSchemaCompareResponse,
     responses={400: {"model": SchemaMappingErrorResponse}},
 )
-def compare_api_schemas_endpoint(request: ApiSchemaCompareRequest) -> dict[str, Any]:
+def compare_api_schemas_endpoint(
+    request: ApiSchemaCompareRequest,
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     try:
         return compare_database_api_schemas(
             source_schema_id=request.source_schema_id,
             target_schema_id=request.target_schema_id,
             save_mapping=request.save_mapping,
+            enterprise_id=current_user["enterprise_id"],
+            is_admin=str(current_user["role"]).upper() == "ADMIN",
         )
     except SchemaMappingError as exc:
-        raise _bad_request(exc) from exc
+        raise _mapping_error(exc) from exc
 
 
 @router.post(
@@ -88,16 +105,42 @@ def compare_api_schemas_endpoint(request: ApiSchemaCompareRequest) -> dict[str, 
     response_model=ApiSchemaTransformPreviewResponse,
     responses={400: {"model": SchemaMappingErrorResponse}},
 )
-def transform_api_preview_endpoint(request: ApiSchemaTransformPreviewRequest) -> dict[str, Any]:
+def transform_api_preview_endpoint(
+    request: ApiSchemaTransformPreviewRequest,
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
     try:
         return transform_database_mapping_preview(
             mapping_id=request.mapping_id,
             data=request.data,
             output_format=request.format,
             save_run=request.save_run,
+            enterprise_id=current_user["enterprise_id"],
+            is_admin=str(current_user["role"]).upper() == "ADMIN",
         )
     except SchemaMappingError as exc:
-        raise _bad_request(exc) from exc
+        raise _mapping_error(exc) from exc
+
+
+@router.put(
+    "/mappings/{mapping_id}/rules",
+    response_model=MappingRulesUpdateResponse,
+    responses={400: {"model": SchemaMappingErrorResponse}},
+)
+def update_mapping_rules_endpoint(
+    mapping_id: int,
+    request: MappingRulesUpdateRequest,
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    try:
+        return update_database_mapping_rules(
+            mapping_id,
+            [rule.model_dump() for rule in request.rules],
+            enterprise_id=current_user["enterprise_id"],
+            is_admin=str(current_user["role"]).upper() == "ADMIN",
+        )
+    except SchemaMappingError as exc:
+        raise _mapping_error(exc) from exc
 
 
 @router.post(
@@ -114,7 +157,7 @@ def matrix_endpoint(request: MatrixRequest) -> dict[str, Any]:
             ]
         )
     except SchemaMappingError as exc:
-        raise _bad_request(exc) from exc
+        raise _mapping_error(exc) from exc
 
 
 @router.post(

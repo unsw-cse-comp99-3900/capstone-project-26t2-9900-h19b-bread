@@ -95,84 +95,21 @@ class PostgresSchemaMappingRepository:
                 row["schema_definition"] = self._schema_definition(cursor, row)
                 return _json_ready(row)
 
-    def save_comparison(
-        self,
-        source_schema: dict[str, Any],
-        target_schema: dict[str, Any],
-        comparison: dict[str, Any],
-    ) -> int:
-        level = {
-            "directly_compatible": "DIRECTLY_COMPATIBLE",
-            "compatible_with_mapping": "COMPATIBLE_WITH_MAPPING",
-            "incompatible": "INCOMPATIBLE",
-        }[comparison["compatibility"]]
-
-        with self.connection_factory() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO compatibility_result (
-                        source_api_id, target_api_id, source_schema_id, target_schema_id,
-                        source_version_id, target_version_id, compatibility_level,
-                        summary, full_result
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
-                    ON CONFLICT (source_schema_id, target_schema_id)
-                    DO UPDATE SET
-                        source_version_id = EXCLUDED.source_version_id,
-                        target_version_id = EXCLUDED.target_version_id,
-                        compatibility_level = EXCLUDED.compatibility_level,
-                        summary = EXCLUDED.summary,
-                        full_result = EXCLUDED.full_result,
-                        created_at = CURRENT_TIMESTAMP
-                    RETURNING result_id
-                    """,
-                    (
-                        source_schema["api_id"],
-                        target_schema["api_id"],
-                        source_schema["schema_id"],
-                        target_schema["schema_id"],
-                        source_schema["version_id"],
-                        target_schema["version_id"],
-                        level,
-                        Jsonb(comparison["summary"]),
-                        Jsonb(comparison),
-                    ),
-                )
-                result_id = cursor.fetchone()["result_id"]
-                cursor.execute("DELETE FROM compatibility_issue WHERE result_id = %s", (result_id,))
-                for issue in comparison["issues"]:
-                    cursor.execute(
-                        """
-                        INSERT INTO compatibility_issue (
-                            result_id, code, kind, severity, source_path,
-                            target_path, message, suggestion
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            result_id,
-                            issue["code"],
-                            issue["kind"],
-                            issue["severity"],
-                            issue.get("source_path"),
-                            issue.get("target_path"),
-                            issue["message"],
-                            issue.get("suggestion"),
-                        ),
-                    )
-                return result_id
-
     def save_mapping(
         self,
         source_schema: dict[str, Any],
         target_schema: dict[str, Any],
-        comparison_result_id: int,
+        comparison_result_id: int | None,
         mapping: SchemaMapping,
     ) -> int:
-        completeness = {
-            "full": "FULL",
-            "partial": "PARTIAL",
-            "incompatible": "INCOMPATIBLE",
-        }[mapping.status]
+        has_missing_rule = any(field.transform == "missing" for field in mapping.fields)
+        completeness = (
+            "INCOMPATIBLE"
+            if mapping.status == "incompatible"
+            else "PARTIAL"
+            if has_missing_rule
+            else "FULL"
+        )
         overview = (
             f"{mapping.source} to {mapping.target}: {mapping.status} mapping "
             f"with {len(mapping.fields)} field rule(s)."
@@ -187,7 +124,7 @@ class PostgresSchemaMappingRepository:
                         source_schema_id, target_schema_id, compatibility_result_id,
                         source_schema_format, target_schema_format,
                         overview_note, lifecycle_status, completeness
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'ACTIVE', %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'DRAFT', %s)
                     ON CONFLICT (source_schema_id, target_schema_id)
                     DO UPDATE SET
                         source_api_id = EXCLUDED.source_api_id,
@@ -196,11 +133,20 @@ class PostgresSchemaMappingRepository:
                         target_version_id = EXCLUDED.target_version_id,
                         source_schema_id = EXCLUDED.source_schema_id,
                         target_schema_id = EXCLUDED.target_schema_id,
-                        compatibility_result_id = EXCLUDED.compatibility_result_id,
+                        compatibility_result_id = COALESCE(
+                            EXCLUDED.compatibility_result_id,
+                            schema_mapping.compatibility_result_id
+                        ),
                         source_schema_format = EXCLUDED.source_schema_format,
                         target_schema_format = EXCLUDED.target_schema_format,
                         overview_note = EXCLUDED.overview_note,
-                        lifecycle_status = EXCLUDED.lifecycle_status,
+                        lifecycle_status = CASE
+                            WHEN schema_mapping.lifecycle_status = 'ACTIVE'
+                                THEN 'STALE'::mapping_lifecycle_status
+                            WHEN schema_mapping.lifecycle_status = 'DEPRECATED'
+                                THEN schema_mapping.lifecycle_status
+                            ELSE 'DRAFT'::mapping_lifecycle_status
+                        END,
                         completeness = EXCLUDED.completeness,
                         updated_at = CURRENT_TIMESTAMP
                     RETURNING mapping_id
@@ -248,6 +194,76 @@ class PostgresSchemaMappingRepository:
                         ),
                     )
                 return mapping_id
+
+    def get_api_owner_enterprise(self, api_id: int) -> int | None:
+        with self.connection_factory() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT enterprise_id FROM api_submission WHERE api_id = %s",
+                    (api_id,),
+                )
+                row = cursor.fetchone()
+                return row["enterprise_id"] if row else None
+
+    def replace_mapping_rules(
+        self,
+        mapping_id: int,
+        fields: list[FieldMapping],
+        completeness: str,
+    ) -> dict[str, Any] | None:
+        with self.connection_factory() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT lifecycle_status
+                    FROM schema_mapping
+                    WHERE mapping_id = %s
+                    FOR UPDATE
+                    """,
+                    (mapping_id,),
+                )
+                current = cursor.fetchone()
+                if current is None:
+                    return None
+                cursor.execute(
+                    "DELETE FROM mapping_rule WHERE schema_mapping_id = %s",
+                    (mapping_id,),
+                )
+                for field in fields:
+                    cursor.execute(
+                        """
+                        INSERT INTO mapping_rule (
+                            schema_mapping_id, source_field, target_field, transform_type,
+                            source_type, target_type, confidence, note
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            mapping_id,
+                            field.source_path or "",
+                            field.target_path,
+                            "rename" if field.transform == "direct" else field.transform,
+                            field.source_type,
+                            field.target_type,
+                            field.confidence,
+                            field.note,
+                        ),
+                    )
+                cursor.execute(
+                    """
+                    UPDATE schema_mapping
+                    SET completeness = %s,
+                        lifecycle_status = CASE
+                            WHEN lifecycle_status = 'ACTIVE'
+                                THEN 'STALE'::mapping_lifecycle_status
+                            ELSE 'DRAFT'::mapping_lifecycle_status
+                        END,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE mapping_id = %s
+                    RETURNING mapping_id, lifecycle_status, completeness, updated_at
+                    """,
+                    (completeness, mapping_id),
+                )
+                return cursor.fetchone()
 
     def get_mapping(self, mapping_id: int) -> dict[str, Any] | None:
         with self.connection_factory() as connection:
