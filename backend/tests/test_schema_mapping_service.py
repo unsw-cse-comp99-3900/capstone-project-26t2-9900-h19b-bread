@@ -127,6 +127,77 @@ def test_transformer_supports_persisted_slash_field_paths():
     assert transformed == {"Invoice": {"ID": "INV-100"}}
 
 
+def test_transformer_merges_array_field_rules_by_item_index():
+    mapping = SchemaMapping(
+        source="Source",
+        target="Target",
+        status="full",
+        fields=[
+            FieldMapping(
+                source_path="Invoice/Lines[]/ID",
+                target_path="Invoice/Items[]/Identifier",
+                transform="rename",
+                source_type="string",
+                target_type="string",
+                confidence="high",
+                note="Rename array item ID.",
+            ),
+            FieldMapping(
+                source_path="Invoice/Lines[]/Amount",
+                target_path="Invoice/Items[]/Total",
+                transform="cast",
+                source_type="string",
+                target_type="number",
+                confidence="high",
+                note="Cast each array item amount.",
+            ),
+        ],
+    )
+    source = {
+        "Invoice": {
+            "Lines": [
+                {"ID": "A", "Amount": "10.5"},
+                {"ID": "B", "Amount": "20"},
+            ]
+        }
+    }
+
+    transformed = build_transformer(mapping)(source)
+
+    assert transformed == {
+        "Invoice": {
+            "Items": [
+                {"Identifier": "A", "Total": 10.5},
+                {"Identifier": "B", "Total": 20.0},
+            ]
+        }
+    }
+
+
+def test_transformer_can_copy_a_whole_array_path():
+    mapping = SchemaMapping(
+        source="Source",
+        target="Target",
+        status="full",
+        fields=[
+            FieldMapping(
+                source_path="lines[]",
+                target_path="items[]",
+                transform="rename",
+                source_type="array",
+                target_type="array",
+                confidence="high",
+                note="Copy array.",
+            )
+        ],
+    )
+    source = {"lines": [{"id": "A"}, {"id": "B"}]}
+
+    transformed = build_transformer(mapping)(source)
+
+    assert transformed == {"items": [{"id": "A"}, {"id": "B"}]}
+
+
 def test_build_compatibility_matrix_returns_same_schema_diagonal():
     schema = _object_schema({"id": _field("integer")})
 

@@ -57,6 +57,39 @@ class ConnectionValidationPipeline:
             context.target_schema.definition,
         )
         schema_result, schema_reasons, schema_mapping_required = self._schema_check(comparison)
+        if (
+            schema_result.status != ConnectionValidationStageStatus.PASSED
+            and context.mapping is not None
+        ):
+            schema_result = StageResult(
+                stage=ConnectionValidationStage.SCHEMA_CHECK,
+                status=ConnectionValidationStageStatus.PASSED,
+                message=(
+                    "Static schema conflicts require proof through the selected mapping "
+                    "and target validation."
+                ),
+                payload={
+                    **{
+                        key: value
+                        for key, value in schema_result.payload.items()
+                        if key != "reason_code"
+                    },
+                    "requires_mapping_proof": True,
+                },
+            )
+            schema_reasons = [
+                reason.model_copy(
+                    update={
+                        "severity": ReasonSeverity.WARNING,
+                        "details": {
+                            **reason.details,
+                            "requires_mapping_proof": True,
+                        },
+                    }
+                )
+                for reason in schema_reasons
+            ]
+            schema_mapping_required = True
         stages.append(schema_result)
         reasons.extend(schema_reasons)
         if schema_result.status != ConnectionValidationStageStatus.PASSED:

@@ -10,6 +10,8 @@ from app.connection_validation import (
 )
 from app.services.schema_mapping.compatibility_engine import compare_schemas
 from app.services.schema_mapping.data_validator import validate_data
+from app.services.schema_mapping.mapping_engine import FieldMapping, SchemaMapping
+from app.services.schema_mapping.schema_transformer import build_transformer
 
 
 def _schema(schema_id: int, direction: str, properties: dict, required=None):
@@ -23,6 +25,14 @@ def _schema(schema_id: int, direction: str, properties: dict, required=None):
             "required": required if required is not None else list(properties),
         },
     )
+
+
+def _object_definition(properties: dict, required=None):
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required if required is not None else list(properties),
+    }
 
 
 def _context(**overrides):
@@ -213,6 +223,89 @@ def test_invalid_source_sample_stops_before_mapping_transform():
     assert decision.stages[4].payload["validation_scope"] == "SOURCE"
     assert decision.stages[5].status == ConnectionValidationStageStatus.NOT_RUN
     assert transform_calls == []
+
+
+def test_array_mapping_output_passes_target_validation():
+    source_schema = PayloadSchema(
+        schema_id=100,
+        direction="OUTPUT",
+        format="JSON",
+        definition=_object_definition(
+            {
+                "lines": {
+                    "type": "array",
+                    "items": _object_definition({"id": {"type": "string"}}),
+                }
+            }
+        ),
+    )
+    target_schema = PayloadSchema(
+        schema_id=200,
+        direction="INPUT",
+        format="JSON",
+        definition=_object_definition(
+            {
+                "items": {
+                    "type": "array",
+                    "items": _object_definition(
+                        {"identifier": {"type": "string"}}
+                    ),
+                }
+            }
+        ),
+    )
+    mapping = SchemaMapping(
+        source="Source",
+        target="Target",
+        status="full",
+        fields=[
+            FieldMapping(
+                source_path="lines[].id",
+                target_path="items[].identifier",
+                transform="rename",
+                source_type="string",
+                target_type="string",
+                confidence="high",
+                note="Map array item identifier.",
+            )
+        ],
+    )
+    context = _context(
+        source_schema=source_schema,
+        target_schema=target_schema,
+        mapping=MappingContext(
+            mapping_id=7,
+            lifecycle_status="DRAFT",
+            completeness="FULL",
+            transform=build_transformer(mapping),
+        ),
+        sample_data={"lines": [{"id": "A"}, {"id": "B"}]},
+    )
+
+    decision = _pipeline().run(context)
+
+    assert decision.reason_code == "COMPATIBLE_WITH_MAPPING"
+    assert decision.activation_allowed is True
+    assert decision.transformed_data == {
+        "items": [{"identifier": "A"}, {"identifier": "B"}]
+    }
+    assert decision.stages[2].payload["requires_mapping_proof"] is True
+
+
+def test_blocking_schema_conflict_without_mapping_remains_incompatible():
+    source_schema = _schema(100, "OUTPUT", {"source_only": {"type": "object"}})
+    target_schema = _schema(200, "INPUT", {"required_target": {"type": "array"}})
+
+    decision = _pipeline().run(
+        _context(
+            source_schema=source_schema,
+            target_schema=target_schema,
+            sample_data={"source_only": {}},
+        )
+    )
+
+    assert decision.reason_code == "SCHEMA_INCOMPATIBLE"
+    assert decision.activation_allowed is False
 
 
 def test_missing_sample_blocks_activation_after_static_checks():
