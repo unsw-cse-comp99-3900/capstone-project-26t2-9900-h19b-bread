@@ -33,6 +33,8 @@
 -- ------------------------------------------------------------
 DROP TABLE IF EXISTS transform_run CASCADE;
 DROP TABLE IF EXISTS mapping_rule CASCADE;
+DROP TABLE IF EXISTS connection_validation_stage_result CASCADE;
+DROP TABLE IF EXISTS connection_validation_run CASCADE;
 DROP TABLE IF EXISTS compatibility_reason_item CASCADE;
 DROP TABLE IF EXISTS compatibility_issue CASCADE;   -- predecessor table name
 DROP TABLE IF EXISTS compatibility_result CASCADE;
@@ -71,6 +73,10 @@ DROP TYPE IF EXISTS schema_direction_type CASCADE;
 DROP TYPE IF EXISTS schema_payload_format CASCADE;
 DROP TYPE IF EXISTS compatibility_level_type CASCADE;
 DROP TYPE IF EXISTS compatibility_reason_severity CASCADE;
+DROP TYPE IF EXISTS connection_validation_run_status CASCADE;
+DROP TYPE IF EXISTS connection_validation_trigger_type CASCADE;
+DROP TYPE IF EXISTS connection_validation_stage_type CASCADE;
+DROP TYPE IF EXISTS connection_validation_stage_status CASCADE;
 DROP TYPE IF EXISTS transform_output_format CASCADE;
 DROP TYPE IF EXISTS transform_mapping_status CASCADE;
 DROP TYPE IF EXISTS field_transform_type CASCADE;
@@ -119,6 +125,19 @@ CREATE TYPE compatibility_level_type AS ENUM (
 CREATE TYPE compatibility_reason_severity AS ENUM (
     'INFO', 'WARNING', 'ERROR'
 );
+CREATE TYPE connection_validation_run_status AS ENUM (
+    'RUNNING', 'PASSED', 'FAILED', 'CANCELLED', 'STALE'
+);
+CREATE TYPE connection_validation_trigger_type AS ENUM (
+    'MANUAL', 'VERSION_CHANGED', 'MAPPING_UPDATED', 'RETRY'
+);
+CREATE TYPE connection_validation_stage_type AS ENUM (
+    'ELIGIBILITY', 'FORMAT_CHECK', 'SCHEMA_CHECK', 'MAPPING_CHECK',
+    'TARGET_VALIDATION', 'ACTIVATION_GATE'
+);
+CREATE TYPE connection_validation_stage_status AS ENUM (
+    'RUNNING', 'PASSED', 'FAILED', 'NOT_RUN', 'MISSING_INFORMATION'
+);
 
 -- lifecycle of a mapping package (ER Layer E overview)
 CREATE TYPE mapping_lifecycle_status AS ENUM (
@@ -156,6 +175,10 @@ COMMENT ON TYPE schema_payload_format IS 'Custom DataType from capstone schemas.
 COMMENT ON TYPE compatibility_level_type IS 'API connection check: COMPATIBLE / INCOMPATIBLE / MISSING_INFORMATION';
 COMMENT ON TYPE mapping_lifecycle_status IS 'Custom DataType: mapping package lifecycle';
 COMMENT ON TYPE compatibility_reason_severity IS 'Custom DataType: severity of a structured connection-validation reason';
+COMMENT ON TYPE connection_validation_run_status IS 'Custom DataType: overall state of an API-to-API connection validation run';
+COMMENT ON TYPE connection_validation_trigger_type IS 'Custom DataType: event that initiated a connection validation run';
+COMMENT ON TYPE connection_validation_stage_type IS 'Custom DataType: ordered connection validation pipeline stages';
+COMMENT ON TYPE connection_validation_stage_status IS 'Custom DataType: per-stage connection validation state';
 COMMENT ON TYPE mapping_completeness IS 'Custom DataType from mapping_engine.SchemaMapping.status';
 COMMENT ON TYPE field_transform_type IS 'Custom DataType from mapping_engine FieldMapping.transform';
 COMMENT ON TYPE confidence_level IS 'Custom DataType from mapping_engine FieldMapping.confidence';
@@ -555,6 +578,66 @@ CREATE TABLE compatibility_reason_item (
 
 COMMENT ON TABLE compatibility_reason_item IS 'Structured, queryable diagnostics for a connection compatibility decision';
 
+-- One auditable execution of the A.output -> B.input validation pipeline.
+CREATE TABLE connection_validation_run (
+    connection_validation_run_id SERIAL PRIMARY KEY,
+    source_api_id          INT NOT NULL,
+    target_api_id          INT NOT NULL,
+    source_version_id      INT NOT NULL,
+    target_version_id      INT NOT NULL,
+    compatibility_result_id INT,
+    status                 connection_validation_run_status NOT NULL DEFAULT 'RUNNING',
+    trigger_type           connection_validation_trigger_type NOT NULL DEFAULT 'MANUAL',
+    created_by             INT,
+    started_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at           TIMESTAMP,
+
+    CONSTRAINT chk_connection_run_not_same_api CHECK (source_api_id <> target_api_id),
+    CONSTRAINT chk_connection_run_completion CHECK (
+        (status = 'RUNNING' AND completed_at IS NULL)
+        OR (status <> 'RUNNING' AND completed_at IS NOT NULL)
+    ),
+    CONSTRAINT fk_connection_run_source_api
+        FOREIGN KEY (source_api_id) REFERENCES api_submission (api_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_connection_run_target_api
+        FOREIGN KEY (target_api_id) REFERENCES api_submission (api_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_connection_run_source_version
+        FOREIGN KEY (source_version_id) REFERENCES api_version (version_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_connection_run_target_version
+        FOREIGN KEY (target_version_id) REFERENCES api_version (version_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_connection_run_result
+        FOREIGN KEY (compatibility_result_id) REFERENCES compatibility_result (result_id)
+        ON DELETE SET NULL,
+    CONSTRAINT fk_connection_run_created_by
+        FOREIGN KEY (created_by) REFERENCES app_user (user_id)
+        ON DELETE SET NULL
+);
+
+COMMENT ON TABLE connection_validation_run IS 'Audit history for repeated A.output to B.input connection validation executions';
+COMMENT ON COLUMN connection_validation_run.compatibility_result_id IS 'Optional final decision produced by this run';
+
+CREATE TABLE connection_validation_stage_result (
+    stage_result_id        SERIAL PRIMARY KEY,
+    connection_validation_run_id INT NOT NULL,
+    stage                  connection_validation_stage_type NOT NULL,
+    status                 connection_validation_stage_status NOT NULL,
+    message                TEXT,
+    payload                JSONB,
+    created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT uq_connection_run_stage UNIQUE (connection_validation_run_id, stage),
+    CONSTRAINT fk_connection_stage_run
+        FOREIGN KEY (connection_validation_run_id)
+        REFERENCES connection_validation_run (connection_validation_run_id)
+        ON DELETE CASCADE
+);
+
+COMMENT ON TABLE connection_validation_stage_result IS 'Persisted outcome of each stage in a connection validation run, including NOT_RUN stages';
+
 -- ============================================================
 -- LAYER E — Schema Mapping & Transform
 -- ============================================================
@@ -715,6 +798,12 @@ CREATE INDEX idx_compat_target_version ON compatibility_result (target_version_i
 CREATE INDEX idx_compat_reason_code ON compatibility_result (reason_code);
 CREATE INDEX idx_compat_reason_item_result ON compatibility_reason_item (result_id);
 CREATE INDEX idx_compat_reason_item_code ON compatibility_reason_item (reason_code);
+
+CREATE INDEX idx_connection_run_pair
+    ON connection_validation_run (source_version_id, target_version_id, started_at DESC);
+CREATE INDEX idx_connection_run_status ON connection_validation_run (status);
+CREATE INDEX idx_connection_run_result ON connection_validation_run (compatibility_result_id);
+CREATE INDEX idx_connection_stage_run ON connection_validation_stage_result (connection_validation_run_id);
 
 CREATE INDEX idx_sm_source_api ON schema_mapping (source_api_id);
 CREATE INDEX idx_sm_target_api ON schema_mapping (target_api_id);
@@ -911,6 +1000,24 @@ INSERT INTO compatibility_reason_item (
     '{"source_output":"VALIDATION_REPORT","target_input":"UBL"}'::jsonb
 );
 
+INSERT INTO connection_validation_run (
+    source_api_id, target_api_id, source_version_id, target_version_id,
+    compatibility_result_id, status, trigger_type, created_by, completed_at
+) VALUES (
+    2, 3, 4, 5, 1, 'FAILED', 'MANUAL', 1, CURRENT_TIMESTAMP
+);
+
+INSERT INTO connection_validation_stage_result (
+    connection_validation_run_id, stage, status, message, payload
+) VALUES
+    (1, 'ELIGIBILITY', 'PASSED', 'Both API versions are published and direction is OUTPUT to INPUT.', NULL),
+    (1, 'FORMAT_CHECK', 'FAILED', 'Source output is terminal and cannot be forwarded.',
+     '{"reason_code":"FORMAT_TERMINAL_OUTPUT"}'::jsonb),
+    (1, 'SCHEMA_CHECK', 'NOT_RUN', 'Skipped because the format gate failed.', NULL),
+    (1, 'MAPPING_CHECK', 'NOT_RUN', 'Skipped because the format gate failed.', NULL),
+    (1, 'TARGET_VALIDATION', 'NOT_RUN', 'Skipped because the format gate failed.', NULL),
+    (1, 'ACTIVATION_GATE', 'FAILED', 'Connection cannot be activated.', NULL);
+
 -- Layer E: mapping package independent of connection check (weak coupling: no required FK)
 INSERT INTO schema_mapping (
     source_api_id, target_api_id, source_version_id, target_version_id,
@@ -969,6 +1076,15 @@ FROM compatibility_result cr
 JOIN api_version sv ON sv.version_id = cr.source_version_id
 JOIN api_version tv ON tv.version_id = cr.target_version_id
 WHERE cr.source_api_id = 2 AND cr.target_api_id = 3;
+
+-- C: latest connection-validation run with all persisted stages
+SELECT cvr.connection_validation_run_id, cvr.status AS run_status,
+       cvsr.stage, cvsr.status AS stage_status, cvsr.message
+FROM connection_validation_run cvr
+JOIN connection_validation_stage_result cvsr
+    ON cvsr.connection_validation_run_id = cvr.connection_validation_run_id
+WHERE cvr.source_version_id = 4 AND cvr.target_version_id = 5
+ORDER BY cvr.started_at DESC, cvsr.stage;
 
 -- E: mapping package with field rules (normalized join; independent of Layer C)
 SELECT sm.mapping_id, sm.completeness, sm.lifecycle_status, sm.compatibility_result_id,
