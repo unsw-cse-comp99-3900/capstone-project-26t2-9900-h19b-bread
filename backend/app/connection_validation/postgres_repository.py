@@ -411,7 +411,7 @@ class PostgresConnectionValidationRepository:
                 )
                 cursor.execute(
                     """
-                    SELECT connection_validation_run_id
+                    SELECT connection_validation_run_id, status
                     FROM connection_validation_run
                     WHERE source_version_id = %s AND target_version_id = %s
                     ORDER BY started_at DESC, connection_validation_run_id DESC
@@ -427,16 +427,34 @@ class PostgresConnectionValidationRepository:
                 )
 
                 self._save_stage_results(cursor, run_id, decision)
+                mapping_id = context.mapping.mapping_id if context.mapping else None
+                if is_latest and latest["status"] == "CANCELLED":
+                    lifecycle_status = None
+                    if mapping_id is not None:
+                        cursor.execute(
+                            "SELECT lifecycle_status FROM schema_mapping WHERE mapping_id = %s",
+                            (mapping_id,),
+                        )
+                        mapping_row = cursor.fetchone()
+                        lifecycle_status = (
+                            mapping_row["lifecycle_status"] if mapping_row else None
+                        )
+                    return PersistedDecision(
+                        compatibility_result_id=None,
+                        mapping_id=mapping_id,
+                        lifecycle_status=lifecycle_status,
+                        is_latest_run=True,
+                    )
                 if not is_latest:
                     cursor.execute(
                         """
                         UPDATE connection_validation_run
                         SET status = 'STALE', completed_at = CURRENT_TIMESTAMP
                         WHERE connection_validation_run_id = %s
+                          AND status = 'RUNNING'
                         """,
                         (run_id,),
                     )
-                    mapping_id = context.mapping.mapping_id if context.mapping else None
                     lifecycle_status = None
                     if mapping_id is not None:
                         cursor.execute(
@@ -515,7 +533,6 @@ class PostgresConnectionValidationRepository:
                         ),
                     )
 
-                mapping_id = context.mapping.mapping_id if context.mapping else None
                 lifecycle_status = None
                 if mapping_id is not None:
                     lifecycle_status = "ACTIVE" if decision.activation_allowed else "FAILED"
@@ -553,6 +570,7 @@ class PostgresConnectionValidationRepository:
                         status = %s,
                         completed_at = CURRENT_TIMESTAMP
                     WHERE connection_validation_run_id = %s
+                      AND status = 'RUNNING'
                     """,
                     (result_id, run_status, run_id),
                 )

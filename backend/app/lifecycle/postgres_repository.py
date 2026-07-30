@@ -128,6 +128,15 @@ class PostgresLifecycleRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
+                    UPDATE connection_validation_run
+                    SET status = 'CANCELLED', completed_at = CURRENT_TIMESTAMP
+                    WHERE (source_api_id = %s OR target_api_id = %s)
+                      AND status = 'RUNNING'
+                    """,
+                    (api_id, api_id),
+                )
+                cursor.execute(
+                    """
                     UPDATE schema_mapping
                     SET lifecycle_status = 'DEPRECATED', updated_at = CURRENT_TIMESTAMP
                     WHERE (source_api_id = %s OR target_api_id = %s)

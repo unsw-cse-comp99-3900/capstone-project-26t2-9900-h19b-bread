@@ -199,6 +199,22 @@ def test_service_suppresses_activation_for_superseded_run():
     assert response.activation_allowed is False
 
 
+def test_service_reports_deprecated_connection_when_run_was_cancelled():
+    repository = FakeRepository()
+
+    def save_cancelled(run_id, request, context, decision):
+        return PersistedDecision(None, 66, "DEPRECATED", True)
+
+    repository.save_decision = save_cancelled
+    service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
+
+    response = service.validate(_request(), actor_id=5, enterprise_id=9)
+
+    assert response.compatibility_level.value == "MISSING_INFORMATION"
+    assert response.reason_code == "CONNECTION_DEPRECATED"
+    assert response.activation_allowed is False
+
+
 def test_source_owner_can_read_and_deprecate_connection():
     repository = FakeRepository()
     service = ConnectionValidationService(repository, mapping_loader=lambda _: None)

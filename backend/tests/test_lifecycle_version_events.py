@@ -11,6 +11,7 @@ from app.lifecycle.enums import (
     VersionEventType,
 )
 from app.lifecycle.exceptions import ApiPermissionError
+from app.lifecycle.postgres_repository import PostgresLifecycleRepository
 from app.lifecycle.schemas import ValidationResultInput
 from app.lifecycle.service import LifecycleService
 
@@ -251,3 +252,46 @@ def test_global_admin_can_withdraw_another_users_api() -> None:
     )
 
     assert result.status == ApiStatus.WITHDRAWN
+
+
+def test_deprecate_api_connections_cancels_running_validation_runs() -> None:
+    class FakeCursor:
+        def __init__(self):
+            self.statements = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, statement, params=None):
+            self.statements.append((statement, params))
+
+    class FakeConnection:
+        def __init__(self, cursor):
+            self.cursor_obj = cursor
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self):
+            return self.cursor_obj
+
+    cursor = FakeCursor()
+    repository = PostgresLifecycleRepository(
+        connection_factory=lambda: FakeConnection(cursor)
+    )
+
+    repository.deprecate_api_connections(5)
+
+    assert len(cursor.statements) == 2
+    cancel_statement, params = cursor.statements[0]
+    assert "UPDATE connection_validation_run" in cancel_statement
+    assert "status = 'CANCELLED'" in cancel_statement
+    assert "status = 'RUNNING'" in cancel_statement
+    assert params == (5, 5)
+    assert "UPDATE schema_mapping" in cursor.statements[1][0]
