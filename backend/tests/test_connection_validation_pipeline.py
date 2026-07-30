@@ -122,3 +122,41 @@ def test_missing_sample_blocks_activation_after_static_checks():
     assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
     assert decision.reason_code == "SAMPLE_DATA_MISSING"
     assert decision.stages[-1].status == ConnectionValidationStageStatus.NOT_RUN
+
+
+def test_document_format_is_not_treated_as_json_xml_bridge():
+    context = _context(
+        target=EndpointVersion(2, 20, "PUBLISHED", ["PDF"], []),
+        aliases=[
+            FormatAlias("JSON", "JSON", "JSON"),
+            FormatAlias("PDF", "PDF", "DOCUMENT"),
+        ],
+    )
+
+    decision = _pipeline().run(context)
+
+    assert decision.compatibility_level == CompatibilityLevel.INCOMPATIBLE
+    assert decision.reason_code == "FORMAT_MISMATCH"
+
+
+def test_supported_format_bridge_still_requires_mapping_transform():
+    source_schema = _schema(100, "OUTPUT", {"id": {"type": "string"}})
+    target_schema = PayloadSchema(
+        schema_id=200,
+        direction="INPUT",
+        format="XML",
+        definition=source_schema.definition,
+    )
+    context = _context(
+        target=EndpointVersion(2, 20, "PUBLISHED", ["XML"], []),
+        target_schema=target_schema,
+        aliases=[
+            FormatAlias("JSON", "JSON", "JSON"),
+            FormatAlias("XML", "XML", "XML"),
+        ],
+    )
+
+    decision = _pipeline().run(context)
+
+    assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
+    assert decision.reason_code == "MAPPING_REQUIRED"

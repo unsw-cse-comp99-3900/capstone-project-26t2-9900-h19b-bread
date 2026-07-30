@@ -24,6 +24,7 @@ from app.connection_validation.schemas import (
     MappingContext,
     PayloadSchema,
 )
+from app.connection_validation.service import ConnectionValidationService
 
 __all__ = [
     "CompatibilityLevel",
@@ -36,6 +37,7 @@ __all__ = [
     "ConnectionValidationRepository",
     "ConnectionValidationRequest",
     "ConnectionValidationResponse",
+    "ConnectionValidationService",
     "ConnectionValidationStage",
     "ConnectionValidationStageStatus",
     "ConnectionValidationTrigger",

@@ -72,3 +72,6 @@ class ConnectionValidationRepository(Protocol):
         decision: ConnectionValidationDecision,
     ) -> int:
         ...
+
+    def cancel_run(self, run_id: int) -> None:
+        ...

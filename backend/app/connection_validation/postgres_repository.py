@@ -336,3 +336,16 @@ class PostgresConnectionValidationRepository:
                     (result_id, run_status, run_id),
                 )
                 return result_id
+
+    def cancel_run(self, run_id: int) -> None:
+        with self.connection_factory() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE connection_validation_run
+                    SET status = 'CANCELLED', completed_at = CURRENT_TIMESTAMP
+                    WHERE connection_validation_run_id = %s
+                      AND status = 'RUNNING'
+                    """,
+                    (run_id,),
+                )

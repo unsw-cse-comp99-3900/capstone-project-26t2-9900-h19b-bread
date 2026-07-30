@@ -24,6 +24,7 @@ TargetValidator = Callable[[dict[str, Any], dict[str, Any]], tuple[bool, str | N
 
 STAGE_ORDER = list(ConnectionValidationStage)
 SUPPORTED_SCHEMA_FORMATS = {"JSON", "XML"}
+MACHINE_READABLE_FORMAT_FAMILIES = {"JSON", "XML", "UBL"}
 
 
 class ConnectionValidationPipeline:
@@ -53,11 +54,16 @@ class ConnectionValidationPipeline:
             context.source_schema.definition,
             context.target_schema.definition,
         )
-        schema_result, schema_reasons, mapping_required = self._schema_check(comparison)
+        schema_result, schema_reasons, schema_mapping_required = self._schema_check(comparison)
         stages.append(schema_result)
         reasons.extend(schema_reasons)
         if schema_result.status != ConnectionValidationStageStatus.PASSED:
             return self._halt(context, stages, reasons, schema_result)
+
+        mapping_required = bool(
+            schema_mapping_required
+            or format_result.payload.get("requires_format_transform")
+        )
 
         mapping_result = self._mapping_check(context, mapping_required)
         stages.append(mapping_result)
@@ -166,19 +172,12 @@ class ConnectionValidationPipeline:
             context.source.output_formats,
             alias_index,
         )
-        target_aliases, target_unknown = self._resolve_aliases(
-            context.target.input_formats,
-            alias_index,
-        )
-        if source_unknown or target_unknown:
+        if source_unknown:
             return self._stage_missing(
                 ConnectionValidationStage.FORMAT_CHECK,
                 "FORMAT_ALIAS_MISSING",
-                "One or more declared formats have no normalization rule.",
-                {
-                    "unknown_source_formats": source_unknown,
-                    "unknown_target_formats": target_unknown,
-                },
+                "One or more source formats have no normalization rule.",
+                {"unknown_source_formats": source_unknown},
             )
         terminal = sorted(alias.raw_value for alias in source_aliases if alias.is_terminal_output)
         if terminal:
@@ -187,6 +186,17 @@ class ConnectionValidationPipeline:
                 "SOURCE_OUTPUT_IS_TERMINAL_REPORT",
                 "Source output is a terminal document or report and cannot feed another API.",
                 {"terminal_formats": terminal},
+            )
+        target_aliases, target_unknown = self._resolve_aliases(
+            context.target.input_formats,
+            alias_index,
+        )
+        if target_unknown:
+            return self._stage_missing(
+                ConnectionValidationStage.FORMAT_CHECK,
+                "FORMAT_ALIAS_MISSING",
+                "One or more target formats have no normalization rule.",
+                {"unknown_target_formats": target_unknown},
             )
 
         source_tokens = {alias.normalized_value for alias in source_aliases}
@@ -203,7 +213,14 @@ class ConnectionValidationPipeline:
 
         source_schema_format = context.source_schema.format.upper()
         target_schema_format = context.target_schema.format.upper()
-        if {source_schema_format, target_schema_format} <= SUPPORTED_SCHEMA_FORMATS:
+        machine_readable = all(
+            alias.family in MACHINE_READABLE_FORMAT_FAMILIES
+            for alias in [*source_aliases, *target_aliases]
+        )
+        if (
+            machine_readable
+            and {source_schema_format, target_schema_format} <= SUPPORTED_SCHEMA_FORMATS
+        ):
             return StageResult(
                 stage=ConnectionValidationStage.FORMAT_CHECK,
                 status=ConnectionValidationStageStatus.PASSED,
@@ -323,7 +340,7 @@ class ConnectionValidationPipeline:
         if mapping_required:
             try:
                 transformed = context.mapping.transform(context.sample_data)
-            except (TypeError, ValueError, KeyError) as exc:
+            except Exception as exc:
                 return (
                     self._stage_failure(
                         ConnectionValidationStage.TARGET_VALIDATION,
