@@ -149,6 +149,10 @@ def test_mapping_compatible_schema_requires_complete_mapping():
     assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
     assert decision.reason_code == "MAPPING_REQUIRED"
     assert decision.activation_allowed is False
+    schema_issues = decision.stages[2].payload["issues"]
+    assert schema_issues
+    assert schema_issues[0]["stage"] == "SCHEMA_CHECK"
+    assert schema_issues[0]["target_path"] == "invoice_id"
 
 
 def test_complete_mapping_must_also_pass_target_validation():

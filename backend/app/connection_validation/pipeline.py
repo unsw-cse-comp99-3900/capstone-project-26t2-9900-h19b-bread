@@ -255,6 +255,7 @@ class ConnectionValidationPipeline:
         payload = {
             "schema_compatibility": compatibility,
             "summary": comparison.get("summary") or {},
+            "issues": [reason.model_dump(mode="json") for reason in reasons],
         }
         if compatibility == "directly_compatible":
             return (
