@@ -33,6 +33,7 @@
 -- ------------------------------------------------------------
 DROP FUNCTION IF EXISTS enforce_connection_schema_roles() CASCADE;
 DROP FUNCTION IF EXISTS mark_mappings_stale_for_new_version() CASCADE;
+DROP FUNCTION IF EXISTS warn_unknown_version_formats() CASCADE;
 DROP TABLE IF EXISTS transform_run CASCADE;
 DROP TABLE IF EXISTS mapping_rule CASCADE;
 DROP TABLE IF EXISTS connection_validation_stage_result CASCADE;
@@ -511,6 +512,45 @@ CREATE UNIQUE INDEX uq_format_alias_raw_ci ON format_alias (lower(btrim(raw_valu
 COMMENT ON TABLE format_alias IS 'Stage 2 vocabulary for deterministic comparison of free-text input/output format values';
 COMMENT ON COLUMN format_alias.is_terminal_output IS 'TRUE when the value is a terminal report/result that must not feed another API';
 
+-- Warn catalogue maintainers when a version introduces an unregistered format.
+CREATE FUNCTION warn_unknown_version_formats()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    unknown_formats TEXT[];
+BEGIN
+    SELECT array_agg(candidate.raw_value ORDER BY candidate.raw_value)
+    INTO unknown_formats
+    FROM (
+        SELECT DISTINCT btrim(value) AS raw_value
+        FROM jsonb_array_elements_text(
+            COALESCE(NEW.input_formats, '[]'::jsonb)
+            || COALESCE(NEW.output_formats, '[]'::jsonb)
+        ) AS formats(value)
+        WHERE btrim(value) <> ''
+    ) AS candidate
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM format_alias alias
+        WHERE lower(btrim(alias.raw_value)) = lower(candidate.raw_value)
+    );
+
+    IF cardinality(unknown_formats) > 0 THEN
+        RAISE WARNING 'api_version % contains unregistered format aliases: %',
+            COALESCE(NEW.version_id::TEXT, '(pending)'),
+            array_to_string(unknown_formats, ', ');
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_warn_unknown_version_formats
+    BEFORE INSERT OR UPDATE OF input_formats, output_formats ON api_version
+    FOR EACH ROW EXECUTE FUNCTION warn_unknown_version_formats();
+
+COMMENT ON FUNCTION warn_unknown_version_formats() IS 'Emits a non-blocking warning when api_version format arrays contain values missing from format_alias';
+
 -- associative entity: compatibility_result — version-pair connection check
 CREATE TABLE compatibility_result (
     result_id              SERIAL PRIMARY KEY,
@@ -918,8 +958,12 @@ INSERT INTO format_alias (raw_value, normalized_value, family, is_terminal_outpu
     ('UBL', 'UBL', 'UBL', FALSE, 'Generic UBL document'),
     ('UBL XML', 'UBL_XML', 'UBL', FALSE, 'UBL serialized as XML'),
     ('UBL XML format', 'UBL_XML', 'UBL', FALSE, 'Catalogue alias'),
-    ('PDF', 'PDF', 'DOCUMENT', TRUE, 'Human-readable terminal document'),
-    ('Validation Report', 'VALIDATION_REPORT', 'REPORT', TRUE, 'Terminal validation output');
+    ('PDF', 'PDF', 'DOCUMENT', FALSE, 'Reusable document input/output; terminal semantics depend on API context'),
+    ('Validation Report', 'VALIDATION_REPORT', 'REPORT', TRUE, 'Terminal validation output'),
+    ('Status Codes', 'STATUS_CODES', 'REPORT', TRUE, 'Terminal status output'),
+    ('Email receipts', 'EMAIL_RECEIPTS', 'DOCUMENT', FALSE, 'Raw document input for extraction APIs'),
+    ('Images', 'IMAGES', 'IMAGE', FALSE, 'Image document input/output'),
+    ('Scans', 'SCANS', 'IMAGE', FALSE, 'Scanned document input');
 
 INSERT INTO enterprise (name, registration_number, website_url, status) VALUES
     ('Demo Supply Chain Enterprise', 'ENT-0001', 'https://example.com', 'ACTIVE'),
