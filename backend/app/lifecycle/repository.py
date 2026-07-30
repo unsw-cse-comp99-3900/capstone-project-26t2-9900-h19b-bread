@@ -61,6 +61,13 @@ class LifecycleRepository(Protocol):
     def archive_previous_version(self, api_id: int, current_version_id: int) -> None:
         """Archive the previous published version in the cloud version chain."""
 
+    def stale_superseded_connection_runs(
+        self,
+        api_id: int,
+        published_version_id: int,
+    ) -> None:
+        """Mark passed connection runs stale after a different version is published."""
+
     def get_previous_published_version_id(
         self,
         api_id: int,

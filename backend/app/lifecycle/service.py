@@ -138,6 +138,8 @@ class LifecycleService:
                 version_id,
                 self._to_version_status(target_status),
             )
+            if target_status == ApiStatus.PUBLISHED:
+                self.repository.stale_superseded_connection_runs(api_id, version_id)
             restored_status: ApiStatus | None = None
             if target_status == ApiStatus.REJECTED:
                 previous_published_id = self.repository.get_previous_published_version_id(

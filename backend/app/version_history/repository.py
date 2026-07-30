@@ -178,6 +178,69 @@ class PostgresVersionHistoryRepository:
                 )
                 return cursor.fetchall(), total
 
+    def list_connection_impacts(
+        self,
+        api_id: int,
+        limit: int,
+        offset: int,
+        version_id: int | None,
+        lifecycle_status: str | None,
+    ) -> tuple[list[dict], int]:
+        filters = ["(mapping.source_api_id = %s OR mapping.target_api_id = %s)"]
+        params: list[object] = [api_id, api_id]
+        if version_id is not None:
+            filters.append(
+                "((mapping.source_api_id = %s AND mapping.source_version_id = %s) "
+                "OR (mapping.target_api_id = %s AND mapping.target_version_id = %s))"
+            )
+            params.extend([api_id, version_id, api_id, version_id])
+        if lifecycle_status is not None:
+            filters.append("mapping.lifecycle_status = %s")
+            params.append(lifecycle_status)
+        where = " AND ".join(filters)
+
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT COUNT(*) AS total FROM schema_mapping mapping WHERE {where}",
+                    params,
+                )
+                total = cursor.fetchone()["total"]
+                cursor.execute(
+                    f"""
+                    SELECT mapping.mapping_id,
+                           CASE WHEN mapping.source_api_id = %s THEN 'SOURCE' ELSE 'TARGET' END AS role,
+                           CASE WHEN mapping.source_api_id = %s
+                               THEN mapping.source_version_id ELSE mapping.target_version_id
+                           END AS api_version_id,
+                           CASE WHEN mapping.source_api_id = %s
+                               THEN mapping.target_api_id ELSE mapping.source_api_id
+                           END AS counterpart_api_id,
+                           CASE WHEN mapping.source_api_id = %s
+                               THEN mapping.target_version_id ELSE mapping.source_version_id
+                           END AS counterpart_version_id,
+                           mapping.lifecycle_status, mapping.completeness,
+                           latest.connection_validation_run_id AS latest_validation_run_id,
+                           latest.status AS latest_validation_run_status,
+                           mapping.updated_at
+                    FROM schema_mapping mapping
+                    LEFT JOIN LATERAL (
+                        SELECT run.connection_validation_run_id, run.status
+                        FROM connection_validation_run run
+                        WHERE run.source_version_id = mapping.source_version_id
+                          AND run.target_version_id = mapping.target_version_id
+                        ORDER BY run.started_at DESC,
+                                 run.connection_validation_run_id DESC
+                        LIMIT 1
+                    ) latest ON TRUE
+                    WHERE {where}
+                    ORDER BY mapping.updated_at DESC, mapping.mapping_id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    [api_id, api_id, api_id, api_id, *params, limit, offset],
+                )
+                return cursor.fetchall(), total
+
     def create_version(self, api_id: int, actor_id: int, previous_id: int | None, data: VersionWriteRequest) -> int:
         with self._connection() as connection:
             with connection.cursor() as cursor:

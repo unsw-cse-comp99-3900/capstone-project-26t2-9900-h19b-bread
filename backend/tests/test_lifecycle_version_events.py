@@ -29,6 +29,7 @@ class FakeLifecycleRepository:
         self.validation_overall_status = ValidationOverallStatus.RUNNING
         self.validation_stage_statuses = {}
         self.connections_deprecated = False
+        self.stale_connection_runs_for = None
 
     @contextmanager
     def transaction(self):
@@ -60,6 +61,9 @@ class FakeLifecycleRepository:
 
     def archive_previous_version(self, api_id, current_version_id):
         self.archived_previous = True
+
+    def stale_superseded_connection_runs(self, api_id, published_version_id):
+        self.stale_connection_runs_for = (api_id, published_version_id)
 
     def get_previous_published_version_id(self, api_id, current_version_id):
         return self.previous_published_version_id
@@ -164,6 +168,7 @@ def test_all_required_stages_publish_and_archive_previous_version() -> None:
     assert result.status == ApiStatus.PUBLISHED
     assert repository.validation_overall_status == ValidationOverallStatus.PASSED
     assert repository.archived_previous is True
+    assert repository.stale_connection_runs_for == (5, 12)
     assert repository.events[0]["event_type"] == VersionEventType.VALIDATION_PASSED
 
 
