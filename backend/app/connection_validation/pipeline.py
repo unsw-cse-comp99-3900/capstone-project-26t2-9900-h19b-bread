@@ -172,60 +172,68 @@ class ConnectionValidationPipeline:
             context.source.output_formats,
             alias_index,
         )
-        if source_unknown:
-            return self._stage_missing(
-                ConnectionValidationStage.FORMAT_CHECK,
-                "FORMAT_ALIAS_MISSING",
-                "One or more source formats have no normalization rule.",
-                {"unknown_source_formats": source_unknown},
-            )
-        terminal = sorted(alias.raw_value for alias in source_aliases if alias.is_terminal_output)
-        if terminal:
-            return self._stage_failure(
-                ConnectionValidationStage.FORMAT_CHECK,
-                "SOURCE_OUTPUT_IS_TERMINAL_REPORT",
-                "Source output is a terminal document or report and cannot feed another API.",
-                {"terminal_formats": terminal},
-            )
         target_aliases, target_unknown = self._resolve_aliases(
             context.target.input_formats,
             alias_index,
         )
-        if target_unknown:
-            return self._stage_missing(
-                ConnectionValidationStage.FORMAT_CHECK,
-                "FORMAT_ALIAS_MISSING",
-                "One or more target formats have no normalization rule.",
-                {"unknown_target_formats": target_unknown},
-            )
 
-        source_tokens = {alias.normalized_value for alias in source_aliases}
+        usable_source_aliases = [
+            alias for alias in source_aliases if not alias.is_terminal_output
+        ]
+        terminal = sorted(
+            alias.raw_value for alias in source_aliases if alias.is_terminal_output
+        )
+        source_tokens = {alias.normalized_value for alias in usable_source_aliases}
         target_tokens = {alias.normalized_value for alias in target_aliases}
-        source_families = {alias.family for alias in source_aliases}
+        source_families = {alias.family for alias in usable_source_aliases}
         target_families = {alias.family for alias in target_aliases}
+        diagnostics = {
+            "ignored_terminal_source_formats": terminal,
+            "unknown_source_formats": source_unknown,
+            "unknown_target_formats": target_unknown,
+        }
         if source_tokens & target_tokens or source_families & target_families:
             return StageResult(
                 stage=ConnectionValidationStage.FORMAT_CHECK,
                 status=ConnectionValidationStageStatus.PASSED,
                 message="Source and target formats overlap after normalization.",
-                payload={"requires_format_transform": False},
+                payload={"requires_format_transform": False, **diagnostics},
             )
 
         source_schema_format = context.source_schema.format.upper()
         target_schema_format = context.target_schema.format.upper()
-        machine_readable = all(
-            alias.family in MACHINE_READABLE_FORMAT_FAMILIES
-            for alias in [*source_aliases, *target_aliases]
+        has_machine_readable_path = all(
+            any(
+                alias.family in MACHINE_READABLE_FORMAT_FAMILIES
+                for alias in aliases
+            )
+            for aliases in (usable_source_aliases, target_aliases)
         )
         if (
-            machine_readable
+            usable_source_aliases
+            and target_aliases
+            and has_machine_readable_path
             and {source_schema_format, target_schema_format} <= SUPPORTED_SCHEMA_FORMATS
         ):
             return StageResult(
                 stage=ConnectionValidationStage.FORMAT_CHECK,
                 status=ConnectionValidationStageStatus.PASSED,
                 message="Formats differ but the schema mapping engine supports this JSON/XML bridge.",
-                payload={"requires_format_transform": True},
+                payload={"requires_format_transform": True, **diagnostics},
+            )
+        if source_unknown or target_unknown:
+            return self._stage_missing(
+                ConnectionValidationStage.FORMAT_CHECK,
+                "FORMAT_ALIAS_MISSING",
+                "No known compatible path exists and one or more formats have no normalization rule.",
+                diagnostics,
+            )
+        if terminal and not usable_source_aliases:
+            return self._stage_failure(
+                ConnectionValidationStage.FORMAT_CHECK,
+                "SOURCE_OUTPUT_IS_TERMINAL_REPORT",
+                "Source output is a terminal document or report and cannot feed another API.",
+                {"terminal_formats": terminal},
             )
         return self._stage_failure(
             ConnectionValidationStage.FORMAT_CHECK,

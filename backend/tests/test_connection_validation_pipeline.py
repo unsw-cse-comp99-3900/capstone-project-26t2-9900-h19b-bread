@@ -81,6 +81,58 @@ def test_terminal_output_fails_and_persists_not_run_shape():
     assert decision.stages[2].status == ConnectionValidationStageStatus.NOT_RUN
 
 
+def test_multi_format_pair_uses_non_terminal_compatible_output():
+    context = _context(
+        source=EndpointVersion(
+            1,
+            10,
+            "PUBLISHED",
+            [],
+            ["JSON", "Validation Report"],
+        ),
+        aliases=[
+            FormatAlias("JSON", "JSON", "JSON"),
+            FormatAlias(
+                "Validation Report",
+                "VALIDATION_REPORT",
+                "REPORT",
+                is_terminal_output=True,
+            ),
+        ],
+    )
+
+    decision = _pipeline().run(context)
+
+    assert decision.compatibility_level == CompatibilityLevel.COMPATIBLE
+    assert decision.reason_code == "DIRECTLY_COMPATIBLE"
+    assert decision.stages[1].payload["ignored_terminal_source_formats"] == [
+        "Validation Report"
+    ]
+
+
+def test_multi_format_pair_ignores_unknown_format_when_known_path_exists():
+    context = _context(
+        source=EndpointVersion(1, 10, "PUBLISHED", [], ["Custom", "JSON"]),
+    )
+
+    decision = _pipeline().run(context)
+
+    assert decision.compatibility_level == CompatibilityLevel.COMPATIBLE
+    assert decision.reason_code == "DIRECTLY_COMPATIBLE"
+    assert decision.stages[1].payload["unknown_source_formats"] == ["Custom"]
+
+
+def test_unknown_format_blocks_when_no_known_path_exists():
+    context = _context(
+        source=EndpointVersion(1, 10, "PUBLISHED", [], ["Custom"]),
+    )
+
+    decision = _pipeline().run(context)
+
+    assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
+    assert decision.reason_code == "FORMAT_ALIAS_MISSING"
+
+
 def test_missing_schema_is_missing_information_not_incompatible():
     decision = _pipeline().run(_context(source_schema=None))
 
@@ -160,3 +212,29 @@ def test_supported_format_bridge_still_requires_mapping_transform():
 
     assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
     assert decision.reason_code == "MAPPING_REQUIRED"
+
+
+def test_supported_bridge_uses_machine_readable_option_from_mixed_formats():
+    source_schema = _schema(100, "OUTPUT", {"id": {"type": "string"}})
+    target_schema = PayloadSchema(
+        schema_id=200,
+        direction="INPUT",
+        format="XML",
+        definition=source_schema.definition,
+    )
+    context = _context(
+        source=EndpointVersion(1, 10, "PUBLISHED", [], ["JSON", "PDF"]),
+        target=EndpointVersion(2, 20, "PUBLISHED", ["XML"], []),
+        target_schema=target_schema,
+        aliases=[
+            FormatAlias("JSON", "JSON", "JSON"),
+            FormatAlias("PDF", "PDF", "DOCUMENT"),
+            FormatAlias("XML", "XML", "XML"),
+        ],
+    )
+
+    decision = _pipeline().run(context)
+
+    assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
+    assert decision.reason_code == "MAPPING_REQUIRED"
+    assert decision.stages[1].payload["requires_format_transform"] is True
