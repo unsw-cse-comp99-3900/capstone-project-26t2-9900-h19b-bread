@@ -99,6 +99,14 @@ def transform_preview(
     mapping = build_mapping(comparison)
     transformer = build_transformer(mapping)
     transformed_json = transformer(data)
+    target_valid, target_error = validate_data(
+        transformed_json,
+        comparison["normalized_target"],
+    )
+    if not target_valid:
+        raise SchemaMappingError(
+            target_error or "Transformed output failed target input validation."
+        )
 
     return {
         "result": (

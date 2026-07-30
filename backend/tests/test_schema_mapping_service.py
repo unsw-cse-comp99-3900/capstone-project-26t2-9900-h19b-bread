@@ -153,6 +153,23 @@ def test_transform_preview_uses_target_xml_root():
     assert "<id>INV-1</id>" in result["result"]
 
 
+def test_transform_preview_rejects_output_that_fails_target_validation():
+    source = _object_schema({"id": _field("string")})
+    target = _object_schema(
+        {
+            "id": _field("string"),
+            "required_target": _field("string"),
+        }
+    )
+
+    with pytest.raises(SchemaMappingError, match="required_target"):
+        transform_preview(
+            source_schema=source,
+            target_schema=target,
+            data={"id": "INV-1"},
+        )
+
+
 def test_transformer_supports_persisted_slash_field_paths():
     mapping = SchemaMapping(
         source="Source",
