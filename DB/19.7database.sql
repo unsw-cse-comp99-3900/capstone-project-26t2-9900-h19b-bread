@@ -31,6 +31,7 @@
 -- ------------------------------------------------------------
 -- DROP (children -> parents)
 -- ------------------------------------------------------------
+DROP FUNCTION IF EXISTS enforce_connection_schema_roles() CASCADE;
 DROP TABLE IF EXISTS transform_run CASCADE;
 DROP TABLE IF EXISTS mapping_rule CASCADE;
 DROP TABLE IF EXISTS connection_validation_stage_result CASCADE;
@@ -291,6 +292,7 @@ CREATE TABLE api_version (
     created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT uq_api_version_number UNIQUE (api_id, version_number),
+    CONSTRAINT uq_api_version_identity UNIQUE (api_id, version_id),
     CONSTRAINT fk_version_api
         FOREIGN KEY (api_id) REFERENCES api_submission (api_id)
         ON DELETE CASCADE,
@@ -463,7 +465,7 @@ CREATE TABLE api_schema (
         FOREIGN KEY (api_id) REFERENCES api_submission (api_id)
         ON DELETE CASCADE,
     CONSTRAINT fk_api_schema_version
-        FOREIGN KEY (version_id) REFERENCES api_version (version_id)
+        FOREIGN KEY (api_id, version_id) REFERENCES api_version (api_id, version_id)
         ON DELETE CASCADE
 );
 
@@ -536,10 +538,12 @@ CREATE TABLE compatibility_result (
         FOREIGN KEY (target_api_id) REFERENCES api_submission (api_id)
         ON DELETE CASCADE,
     CONSTRAINT fk_compat_source_version
-        FOREIGN KEY (source_version_id) REFERENCES api_version (version_id)
+        FOREIGN KEY (source_api_id, source_version_id)
+        REFERENCES api_version (api_id, version_id)
         ON DELETE CASCADE,
     CONSTRAINT fk_compat_target_version
-        FOREIGN KEY (target_version_id) REFERENCES api_version (version_id)
+        FOREIGN KEY (target_api_id, target_version_id)
+        REFERENCES api_version (api_id, version_id)
         ON DELETE CASCADE,
     CONSTRAINT fk_compat_source_schema
         FOREIGN KEY (source_schema_id) REFERENCES api_schema (schema_id)
@@ -604,10 +608,12 @@ CREATE TABLE connection_validation_run (
         FOREIGN KEY (target_api_id) REFERENCES api_submission (api_id)
         ON DELETE CASCADE,
     CONSTRAINT fk_connection_run_source_version
-        FOREIGN KEY (source_version_id) REFERENCES api_version (version_id)
+        FOREIGN KEY (source_api_id, source_version_id)
+        REFERENCES api_version (api_id, version_id)
         ON DELETE CASCADE,
     CONSTRAINT fk_connection_run_target_version
-        FOREIGN KEY (target_version_id) REFERENCES api_version (version_id)
+        FOREIGN KEY (target_api_id, target_version_id)
+        REFERENCES api_version (api_id, version_id)
         ON DELETE CASCADE,
     CONSTRAINT fk_connection_run_result
         FOREIGN KEY (compatibility_result_id) REFERENCES compatibility_result (result_id)
@@ -670,10 +676,12 @@ CREATE TABLE schema_mapping (
         FOREIGN KEY (target_api_id) REFERENCES api_submission (api_id)
         ON DELETE CASCADE,
     CONSTRAINT fk_sm_source_version
-        FOREIGN KEY (source_version_id) REFERENCES api_version (version_id)
+        FOREIGN KEY (source_api_id, source_version_id)
+        REFERENCES api_version (api_id, version_id)
         ON DELETE CASCADE,
     CONSTRAINT fk_sm_target_version
-        FOREIGN KEY (target_version_id) REFERENCES api_version (version_id)
+        FOREIGN KEY (target_api_id, target_version_id)
+        REFERENCES api_version (api_id, version_id)
         ON DELETE CASCADE,
     CONSTRAINT fk_sm_source_schema
         FOREIGN KEY (source_schema_id) REFERENCES api_schema (schema_id)
@@ -688,6 +696,56 @@ CREATE TABLE schema_mapping (
 
 COMMENT ON TABLE schema_mapping IS 'ER Layer E: API-pair mapping overview; optional weak FK to connection check; field rules in mapping_rule';
 COMMENT ON COLUMN schema_mapping.compatibility_result_id IS 'Optional; Layer E does not require Layer C field compare';
+
+-- Enforce the directional schema contract that cannot be expressed by simple FKs.
+CREATE FUNCTION enforce_connection_schema_roles()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.source_schema_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1
+        FROM api_schema s
+        WHERE s.schema_id = NEW.source_schema_id
+          AND s.api_id = NEW.source_api_id
+          AND s.version_id = NEW.source_version_id
+          AND s.direction = 'OUTPUT'
+    ) THEN
+        RAISE EXCEPTION 'source_schema_id % must be an OUTPUT schema owned by source API/version',
+            NEW.source_schema_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    IF NEW.target_schema_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1
+        FROM api_schema s
+        WHERE s.schema_id = NEW.target_schema_id
+          AND s.api_id = NEW.target_api_id
+          AND s.version_id = NEW.target_version_id
+          AND s.direction = 'INPUT'
+    ) THEN
+        RAISE EXCEPTION 'target_schema_id % must be an INPUT schema owned by target API/version',
+            NEW.target_schema_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_compatibility_schema_roles
+    BEFORE INSERT OR UPDATE OF source_api_id, target_api_id,
+        source_version_id, target_version_id, source_schema_id, target_schema_id
+    ON compatibility_result
+    FOR EACH ROW EXECUTE FUNCTION enforce_connection_schema_roles();
+
+CREATE TRIGGER trg_mapping_schema_roles
+    BEFORE INSERT OR UPDATE OF source_api_id, target_api_id,
+        source_version_id, target_version_id, source_schema_id, target_schema_id
+    ON schema_mapping
+    FOR EACH ROW EXECUTE FUNCTION enforce_connection_schema_roles();
+
+COMMENT ON FUNCTION enforce_connection_schema_roles() IS 'Ensures connection source schemas are OUTPUT and target schemas are INPUT for the selected API versions';
 
 -- weak entity: mapping_rule (N:1 schema_mapping)  [was: mapping_rules]
 -- Normalized: API/version identity comes from parent schema_mapping (no duplicate FKs)
@@ -957,6 +1015,11 @@ INSERT INTO api_schema (
     api_id, version_id, direction, format, source_key, source_path, source_method,
     media_type, status_code, raw_schema, normalized_schema, schema_version
 ) VALUES
+(1, 3, 'OUTPUT', 'JSON',
+ 'sample:output:invoice-json', 'Invoice', NULL, 'application/json', '200',
+ '{"type":"object","properties":{"ID":{"type":"string"},"IssueDate":{"type":"string"},"PayableAmount":{"type":"number"}}}'::jsonb,
+ '{"fields":[{"path":"Invoice/ID","type":"string","required":true},{"path":"Invoice/IssueDate","type":"date","required":true},{"path":"Invoice/PayableAmount","type":"number","required":true}]}'::jsonb,
+ 1),
 (2, 4, 'INPUT', 'XML',
  'sample:input:ozedi-invoice', 'Invoice', NULL, 'XML', NULL,
  '{"root":"Invoice","fields":["ID","IssueDate","PayableAmount"]}'::jsonb,
@@ -973,7 +1036,10 @@ INSERT INTO schema_field (schema_id, field_path, field_name, field_type, is_requ
 (1, 'Invoice/IssueDate', 'IssueDate', 'date', TRUE, 1, 'Invoice'),
 (1, 'Invoice/PayableAmount', 'PayableAmount', 'number', TRUE, 1, 'Invoice'),
 (2, 'Invoice/ID', 'ID', 'string', TRUE, 1, 'Invoice'),
-(2, 'Invoice/IssueDate', 'IssueDate', 'date', TRUE, 1, 'Invoice');
+(2, 'Invoice/IssueDate', 'IssueDate', 'date', TRUE, 1, 'Invoice'),
+(2, 'Invoice/PayableAmount', 'PayableAmount', 'number', TRUE, 1, 'Invoice'),
+(3, 'Invoice/ID', 'ID', 'string', TRUE, 1, 'Invoice'),
+(3, 'Invoice/IssueDate', 'IssueDate', 'date', TRUE, 1, 'Invoice');
 
 -- Layer C: API-to-API connection check (A.output → B.input) — version pair + reason
 -- ESSAnalyse output "Validation Report" cannot feed OZEDI input "UBL"
@@ -1025,9 +1091,9 @@ INSERT INTO schema_mapping (
     source_schema_format, target_schema_format,
     overview_note, lifecycle_status, completeness
 ) VALUES (
-    2, 3, 4, 5, 1, 2, NULL, 'XML', 'XML',
-    'Map common Invoice header fields; drop or default PayableAmount.',
-    'ACTIVE', 'PARTIAL'
+    1, 2, 3, 4, 1, 2, NULL, 'JSON', 'XML',
+    'Map the JSON invoice output to the UBL XML validation input.',
+    'ACTIVE', 'FULL'
 );
 
 INSERT INTO mapping_rule (
@@ -1036,17 +1102,17 @@ INSERT INTO mapping_rule (
 ) VALUES
 (1, 'Invoice/ID', 'Invoice/ID', 'rename', 'string', 'string', 'high', 'Direct match'),
 (1, 'Invoice/IssueDate', 'Invoice/IssueDate', 'rename', 'date', 'date', 'high', 'Direct match'),
-(1, 'Invoice/PayableAmount', 'Invoice/PayableAmount', 'drop', 'number', NULL, 'medium', 'Not on target');
+(1, 'Invoice/PayableAmount', 'Invoice/PayableAmount', 'rename', 'number', 'number', 'high', 'Direct match');
 
 INSERT INTO transform_run (
     schema_mapping_id, source_api_id, target_api_id,
     source_schema_id, target_schema_id, source_version_id, target_version_id,
     input_data, output_data, output_format, mapping_status, warnings, success
 ) VALUES (
-    1, 2, 3, 1, 2, 4, 5,
+    1, 1, 2, 1, 2, 3, 4,
     '{"Invoice":{"ID":"INV-1","IssueDate":"2026-07-01","PayableAmount":120.5}}'::jsonb,
-    '{"Invoice":{"ID":"INV-1","IssueDate":"2026-07-01"}}'::jsonb,
-    'JSON', 'partial', '["Dropped Invoice/PayableAmount"]'::jsonb, TRUE
+    '{"Invoice":{"ID":"INV-1","IssueDate":"2026-07-01","PayableAmount":120.5}}'::jsonb,
+    'XML', 'full', '[]'::jsonb, TRUE
 );
 
 -- ============================================================
@@ -1091,7 +1157,7 @@ SELECT sm.mapping_id, sm.completeness, sm.lifecycle_status, sm.compatibility_res
        mr.source_field, mr.target_field, mr.transform_type, mr.confidence
 FROM schema_mapping sm
 JOIN mapping_rule mr ON mr.schema_mapping_id = sm.mapping_id
-WHERE sm.source_api_id = 2 AND sm.target_api_id = 3;
+WHERE sm.source_api_id = 1 AND sm.target_api_id = 2;
 
 -- Optional weak link: connection check ↔ mapping ↔ transform
 SELECT cr.compatibility_level, cr.reason, sm.mapping_id, sm.completeness,
