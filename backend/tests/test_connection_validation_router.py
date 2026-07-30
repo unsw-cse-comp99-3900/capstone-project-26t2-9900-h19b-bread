@@ -56,6 +56,45 @@ class FakeService:
             "updated_at": "2026-07-30T12:00:00",
         }
 
+    def get_run(self, run_id, *, enterprise_id, is_admin=False):
+        return {
+            "connection_validation_run_id": run_id,
+            "source_api_id": 1,
+            "source_version_id": 10,
+            "target_api_id": 2,
+            "target_version_id": 20,
+            "compatibility_result_id": 88,
+            "status": "PASSED",
+            "trigger_type": "MANUAL",
+            "created_by": 5,
+            "started_at": "2026-07-30T12:00:00",
+            "completed_at": "2026-07-30T12:01:00",
+            "stages": [
+                {
+                    "stage": "ELIGIBILITY",
+                    "status": "PASSED",
+                    "message": "Eligible.",
+                    "payload": {},
+                }
+            ],
+        }
+
+    def list_connection_runs(
+        self,
+        mapping_id,
+        page,
+        page_size,
+        *,
+        enterprise_id,
+        is_admin=False,
+    ):
+        return {
+            "items": [self.get_run(77, enterprise_id=enterprise_id, is_admin=is_admin)],
+            "page": page,
+            "page_size": page_size,
+            "total": 1,
+        }
+
     def deprecate_connection(self, mapping_id, *, enterprise_id, is_admin=False):
         result = self.get_connection(
             mapping_id,
@@ -115,3 +154,27 @@ def test_connection_lifecycle_endpoints_return_current_state():
     assert current.json()["lifecycle_status"] == "ACTIVE"
     assert deprecated.status_code == 200
     assert deprecated.json()["lifecycle_status"] == "DEPRECATED"
+
+
+def test_connection_validation_history_endpoints_return_persisted_runs():
+    app.dependency_overrides[get_connection_validation_service] = lambda: FakeService()
+    app.dependency_overrides[get_connection_validation_actor] = lambda: {
+        "user_id": 5,
+        "enterprise_id": 9,
+        "role": "PUBLISHER",
+    }
+    client = TestClient(app)
+
+    try:
+        detail = client.get("/api/v1/connection-validation/runs/77")
+        history = client.get(
+            "/api/v1/connection-validation/connections/66/runs?page=2&page_size=10"
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert detail.status_code == 200
+    assert detail.json()["stages"][0]["stage"] == "ELIGIBILITY"
+    assert history.status_code == 200
+    assert history.json()["page"] == 2
+    assert history.json()["items"][0]["connection_validation_run_id"] == 77

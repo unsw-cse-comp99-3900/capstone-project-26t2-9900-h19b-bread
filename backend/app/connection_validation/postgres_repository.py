@@ -284,6 +284,85 @@ class PostgresConnectionValidationRepository:
                 )
                 return cursor.fetchone()
 
+    def get_run(self, run_id: int) -> dict[str, Any] | None:
+        with self.connection_factory() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT run.connection_validation_run_id, run.source_api_id,
+                           run.source_version_id, run.target_api_id,
+                           run.target_version_id, run.compatibility_result_id,
+                           run.status, run.trigger_type, run.created_by,
+                           run.started_at, run.completed_at,
+                           source.enterprise_id AS source_enterprise_id
+                    FROM connection_validation_run run
+                    JOIN api_submission source ON source.api_id = run.source_api_id
+                    WHERE run.connection_validation_run_id = %s
+                    """,
+                    (run_id,),
+                )
+                run = cursor.fetchone()
+                if run is None:
+                    return None
+                cursor.execute(
+                    """
+                    SELECT stage, status, message, COALESCE(payload, '{}'::jsonb) AS payload
+                    FROM connection_validation_stage_result
+                    WHERE connection_validation_run_id = %s
+                    ORDER BY stage
+                    """,
+                    (run_id,),
+                )
+                run["stages"] = cursor.fetchall()
+                return run
+
+    def list_runs(
+        self,
+        source_api_id: int,
+        source_version_id: int,
+        target_api_id: int,
+        target_version_id: int,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[dict[str, Any]], int]:
+        parameters = (
+            source_api_id,
+            source_version_id,
+            target_api_id,
+            target_version_id,
+        )
+        with self.connection_factory() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM connection_validation_run
+                    WHERE source_api_id = %s
+                      AND source_version_id = %s
+                      AND target_api_id = %s
+                      AND target_version_id = %s
+                    """,
+                    parameters,
+                )
+                total = cursor.fetchone()["total"]
+                cursor.execute(
+                    """
+                    SELECT connection_validation_run_id, source_api_id,
+                           source_version_id, target_api_id, target_version_id,
+                           compatibility_result_id, status, trigger_type,
+                           created_by, started_at, completed_at
+                    FROM connection_validation_run
+                    WHERE source_api_id = %s
+                      AND source_version_id = %s
+                      AND target_api_id = %s
+                      AND target_version_id = %s
+                    ORDER BY started_at DESC, connection_validation_run_id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (*parameters, limit, offset),
+                )
+                return cursor.fetchall(), total
+
     def deprecate_connection(self, mapping_id: int) -> dict[str, Any] | None:
         with self.connection_factory() as connection:
             with connection.cursor() as cursor:

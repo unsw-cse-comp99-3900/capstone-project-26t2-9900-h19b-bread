@@ -3,6 +3,7 @@ from datetime import datetime
 
 from app.connection_validation import (
     ConnectionValidationNotFoundError,
+    ConnectionValidationPermissionError,
     ConnectionValidationRequest,
     ConnectionValidationService,
     EndpointVersion,
@@ -45,6 +46,29 @@ class FakeRepository:
             "updated_at": datetime(2026, 7, 30),
             "source_enterprise_id": 9,
         }
+        self.run = {
+            "connection_validation_run_id": 77,
+            "source_api_id": 1,
+            "source_version_id": 10,
+            "target_api_id": 2,
+            "target_version_id": 20,
+            "compatibility_result_id": 88,
+            "status": "PASSED",
+            "trigger_type": "MANUAL",
+            "created_by": 5,
+            "started_at": datetime(2026, 7, 30, 12, 0),
+            "completed_at": datetime(2026, 7, 30, 12, 1),
+            "source_enterprise_id": 9,
+            "stages": [
+                {
+                    "stage": "ELIGIBILITY",
+                    "status": "PASSED",
+                    "message": "Eligible.",
+                    "payload": {},
+                }
+            ],
+        }
+        self.list_runs_args = None
 
     def get_version(self, api_id, version_id):
         return {(1, 10): self.source, (2, 20): self.target}.get((api_id, version_id))
@@ -81,6 +105,18 @@ class FakeRepository:
 
     def get_connection(self, mapping_id):
         return self.connection if mapping_id == 66 else None
+
+    def get_run(self, run_id):
+        return self.run if run_id == 77 else None
+
+    def list_runs(self, *args):
+        self.list_runs_args = args
+        summary = {
+            key: value
+            for key, value in self.run.items()
+            if key not in {"stages", "source_enterprise_id"}
+        }
+        return [summary], 1
 
     def deprecate_connection(self, mapping_id):
         self.connection["lifecycle_status"] = "DEPRECATED"
@@ -181,3 +217,24 @@ def test_validating_connection_cannot_be_deprecated():
 
     with pytest.raises(ValueError, match="cannot be deprecated"):
         service.deprecate_connection(66, enterprise_id=9)
+
+
+def test_source_owner_can_read_run_detail_and_connection_history():
+    repository = FakeRepository()
+    service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
+
+    run = service.get_run(77, enterprise_id=9)
+    history = service.list_connection_runs(66, 2, 10, enterprise_id=9)
+
+    assert run.stages[0].stage.value == "ELIGIBILITY"
+    assert history.total == 1
+    assert history.page == 2
+    assert repository.list_runs_args == (1, 10, 2, 20, 10, 10)
+
+
+def test_other_enterprise_cannot_read_validation_run():
+    repository = FakeRepository()
+    service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
+
+    with pytest.raises(ConnectionValidationPermissionError):
+        service.get_run(77, enterprise_id=10)

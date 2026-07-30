@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.connection_validation import (
     ConnectionValidationConflictError,
@@ -9,6 +9,8 @@ from app.connection_validation import (
     ConnectionValidationPermissionError,
     ConnectionValidationRequest,
     ConnectionValidationResponse,
+    ConnectionValidationRunDetail,
+    ConnectionValidationRunPage,
     PostgresConnectionValidationRepository,
 )
 from app.connection_validation.service import ConnectionValidationService
@@ -43,6 +45,24 @@ def validate_connection_endpoint(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.get("/runs/{run_id}", response_model=ConnectionValidationRunDetail)
+def get_validation_run_endpoint(
+    run_id: int,
+    service: ConnectionValidationService = Depends(get_connection_validation_service),
+    current_user: dict[str, Any] = Depends(get_connection_validation_actor),
+) -> ConnectionValidationRunDetail:
+    try:
+        return service.get_run(
+            run_id,
+            enterprise_id=current_user["enterprise_id"],
+            is_admin=str(current_user["role"]).upper() == "ADMIN",
+        )
+    except ConnectionValidationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConnectionValidationPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
 @router.get("/connections/{mapping_id}", response_model=ConnectionLifecycleResponse)
 def get_connection_endpoint(
     mapping_id: int,
@@ -52,6 +72,31 @@ def get_connection_endpoint(
     try:
         return service.get_connection(
             mapping_id,
+            enterprise_id=current_user["enterprise_id"],
+            is_admin=str(current_user["role"]).upper() == "ADMIN",
+        )
+    except ConnectionValidationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConnectionValidationPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.get(
+    "/connections/{mapping_id}/runs",
+    response_model=ConnectionValidationRunPage,
+)
+def list_connection_runs_endpoint(
+    mapping_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    service: ConnectionValidationService = Depends(get_connection_validation_service),
+    current_user: dict[str, Any] = Depends(get_connection_validation_actor),
+) -> ConnectionValidationRunPage:
+    try:
+        return service.list_connection_runs(
+            mapping_id,
+            page,
+            page_size,
             enterprise_id=current_user["enterprise_id"],
             is_admin=str(current_user["role"]).upper() == "ADMIN",
         )

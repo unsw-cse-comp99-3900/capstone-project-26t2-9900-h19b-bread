@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, Field
 
@@ -75,6 +75,31 @@ class ConnectionLifecycleResponse(BaseModel):
     lifecycle_status: str
     completeness: str
     updated_at: datetime
+
+
+class ConnectionValidationRunSummary(BaseModel):
+    connection_validation_run_id: int
+    source_api_id: int
+    source_version_id: int
+    target_api_id: int
+    target_version_id: int
+    compatibility_result_id: int | None = None
+    status: Literal["RUNNING", "PASSED", "FAILED", "CANCELLED", "STALE"]
+    trigger_type: ConnectionValidationTrigger
+    created_by: int | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+
+
+class ConnectionValidationRunDetail(ConnectionValidationRunSummary):
+    stages: list[StageResult]
+
+
+class ConnectionValidationRunPage(BaseModel):
+    items: list[ConnectionValidationRunSummary]
+    page: int
+    page_size: int
+    total: int
 
 
 @dataclass(frozen=True)

@@ -15,6 +15,8 @@ from app.connection_validation.schemas import (
     ConnectionLifecycleResponse,
     ConnectionValidationRequest,
     ConnectionValidationResponse,
+    ConnectionValidationRunDetail,
+    ConnectionValidationRunPage,
     MappingContext,
 )
 from app.services.schema_mapping.compatibility_engine import compare_schemas
@@ -174,6 +176,46 @@ class ConnectionValidationService:
     ) -> ConnectionLifecycleResponse:
         connection = self._get_authorized_connection(mapping_id, enterprise_id, is_admin)
         return ConnectionLifecycleResponse.model_validate(connection)
+
+    def get_run(
+        self,
+        run_id: int,
+        *,
+        enterprise_id: int,
+        is_admin: bool = False,
+    ) -> ConnectionValidationRunDetail:
+        run = self.repository.get_run(run_id)
+        if run is None:
+            raise ConnectionValidationNotFoundError(
+                f"Connection validation run {run_id} was not found."
+            )
+        if not is_admin and run["source_enterprise_id"] != enterprise_id:
+            raise ConnectionValidationPermissionError(
+                "Only the source API owner or an administrator may read this validation run."
+            )
+        return ConnectionValidationRunDetail.model_validate(run)
+
+    def list_connection_runs(
+        self,
+        mapping_id: int,
+        page: int,
+        page_size: int,
+        *,
+        enterprise_id: int,
+        is_admin: bool = False,
+    ) -> ConnectionValidationRunPage:
+        connection = self._get_authorized_connection(mapping_id, enterprise_id, is_admin)
+        items, total = self.repository.list_runs(
+            connection["source_api_id"],
+            connection["source_version_id"],
+            connection["target_api_id"],
+            connection["target_version_id"],
+            page_size,
+            (page - 1) * page_size,
+        )
+        return ConnectionValidationRunPage.model_validate(
+            {"items": items, "page": page, "page_size": page_size, "total": total}
+        )
 
     def deprecate_connection(
         self,

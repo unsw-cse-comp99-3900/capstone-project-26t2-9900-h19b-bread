@@ -76,6 +76,20 @@ class ConnectionValidationRepository(Protocol):
     def get_connection(self, mapping_id: int) -> dict | None:
         ...
 
+    def get_run(self, run_id: int) -> dict | None:
+        ...
+
+    def list_runs(
+        self,
+        source_api_id: int,
+        source_version_id: int,
+        target_api_id: int,
+        target_version_id: int,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[dict], int]:
+        ...
+
     def deprecate_connection(self, mapping_id: int) -> dict | None:
         ...
 
