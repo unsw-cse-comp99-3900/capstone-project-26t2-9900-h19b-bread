@@ -64,6 +64,10 @@ class ConnectionValidationService:
             raise ConnectionValidationNotFoundError(
                 f"Target API {request.target_api_id} version {request.target_version_id} was not found."
             )
+        if request.source_api_id == request.target_api_id:
+            raise ConnectionValidationConflictError(
+                "Source and target must be different APIs."
+            )
 
         self.repository.assert_actor_can_validate(
             request.source_api_id,

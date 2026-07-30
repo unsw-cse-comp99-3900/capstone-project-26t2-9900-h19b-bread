@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.connection_validation import (
     CompatibilityLevel,
+    ConnectionValidationConflictError,
     ConnectionValidationResponse,
     ConnectionValidationStage,
     ConnectionValidationStageStatus,
@@ -131,6 +132,39 @@ def test_connection_validation_endpoint_uses_authenticated_actor():
     assert response.status_code == 200
     assert response.json()["connection_validation_run_id"] == 77
     assert response.json()["activation_allowed"] is True
+
+
+def test_connection_validation_endpoint_returns_conflict_for_invalid_pair():
+    class ConflictService(FakeService):
+        def validate(self, request, *, actor_id, enterprise_id, is_admin=False):
+            raise ConnectionValidationConflictError(
+                "Source and target must be different APIs."
+            )
+
+    app.dependency_overrides[get_connection_validation_service] = lambda: ConflictService()
+    app.dependency_overrides[get_connection_validation_actor] = lambda: {
+        "user_id": 5,
+        "enterprise_id": 9,
+        "role": "PUBLISHER",
+    }
+    client = TestClient(app)
+
+    try:
+        response = client.post(
+            "/api/v1/connection-validation/runs",
+            json={
+                "source_api_id": 1,
+                "source_version_id": 10,
+                "target_api_id": 1,
+                "target_version_id": 10,
+                "sample_data": {"id": "INV-1"},
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Source and target must be different APIs."
 
 
 def test_connection_lifecycle_endpoints_return_current_state():
