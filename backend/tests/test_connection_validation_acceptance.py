@@ -84,8 +84,17 @@ def test_ess_aggregation_json_to_xml_passes_mapping_and_target_acceptance():
     assert decision.reason_code == "COMPATIBLE_WITH_MAPPING"
     assert decision.activation_allowed is True
     assert decision.transform_execution is not None
-    assert decision.transform_execution.output_text.startswith("<aggregation>")
-    assert "<value>1523847.92</value>" in decision.transform_execution.output_text
+    output_text = decision.transform_execution.output_text
+    assert output_text.startswith("<aggregation>")
+    assert "<value>1523847.92</value>" in output_text
+    assert "<item>" not in output_text
+    assert output_text.count("<source>") == 3
+    assert output_text.count("<target>") == 2
+    materialized_schema = normalize_schema(extract_schema_from_xml(output_text))
+    assert (
+        compare_schemas(materialized_schema, target_definition)["compatibility"]
+        == "directly_compatible"
+    )
 
 
 def test_ess_validation_version_pair_passes_rename_mapping():

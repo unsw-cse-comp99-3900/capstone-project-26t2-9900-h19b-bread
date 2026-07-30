@@ -90,8 +90,10 @@ def _dict_to_xml(data: Any, parent: ET.Element) -> None:
         for key, value in data.items():
             if not _is_xml_name(str(key)):
                 raise TransformError(f"'{key}' is not a valid XML element name.")
-            child = ET.SubElement(parent, str(key))
-            _dict_to_xml(value, child)
+            values = value if isinstance(value, list) else [value]
+            for item in values:
+                child = ET.SubElement(parent, str(key))
+                _dict_to_xml(item, child)
     elif isinstance(data, list):
         for item in data:
             item_el = ET.SubElement(parent, "item")
