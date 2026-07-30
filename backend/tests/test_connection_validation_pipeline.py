@@ -168,6 +168,31 @@ def test_complete_mapping_must_also_pass_target_validation():
     assert decision.transformed_data == {"invoice_id": "INV-1"}
 
 
+def test_invalid_source_sample_stops_before_mapping_transform():
+    target = _schema(200, "INPUT", {"invoice_id": {"type": "string"}})
+    transform_calls = []
+    mapping = MappingContext(
+        mapping_id=7,
+        lifecycle_status="DRAFT",
+        completeness="FULL",
+        transform=lambda data: transform_calls.append(data) or {"invoice_id": "INV-1"},
+    )
+
+    decision = _pipeline().run(
+        _context(
+            target_schema=target,
+            mapping=mapping,
+            sample_data={"unexpected": "value"},
+        )
+    )
+
+    assert decision.compatibility_level == CompatibilityLevel.INCOMPATIBLE
+    assert decision.reason_code == "SOURCE_VALIDATION_FAILED"
+    assert decision.stages[4].payload["validation_scope"] == "SOURCE"
+    assert decision.stages[5].status == ConnectionValidationStageStatus.NOT_RUN
+    assert transform_calls == []
+
+
 def test_missing_sample_blocks_activation_after_static_checks():
     decision = _pipeline().run(_context(sample_data=None))
 

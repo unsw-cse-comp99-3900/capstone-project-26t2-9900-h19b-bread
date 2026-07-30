@@ -344,6 +344,21 @@ class ConnectionValidationPipeline:
                 ),
                 None,
             )
+        source_valid, source_error = self.validate_target(
+            context.sample_data,
+            context.source_schema.definition,
+        )
+        if not source_valid:
+            return (
+                self._stage_failure(
+                    ConnectionValidationStage.TARGET_VALIDATION,
+                    "SOURCE_VALIDATION_FAILED",
+                    source_error
+                    or "Sample output does not satisfy the source output schema.",
+                    {"validation_scope": "SOURCE"},
+                ),
+                None,
+            )
         transformed = context.sample_data
         if mapping_required:
             try:
@@ -373,6 +388,7 @@ class ConnectionValidationPipeline:
                 stage=ConnectionValidationStage.TARGET_VALIDATION,
                 status=ConnectionValidationStageStatus.PASSED,
                 message="The resulting payload satisfies the target input schema.",
+                payload={"validation_scope": "SOURCE_AND_TARGET"},
             ),
             transformed,
         )
