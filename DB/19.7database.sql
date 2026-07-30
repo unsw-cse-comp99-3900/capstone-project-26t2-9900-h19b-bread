@@ -33,8 +33,10 @@
 -- ------------------------------------------------------------
 DROP TABLE IF EXISTS transform_run CASCADE;
 DROP TABLE IF EXISTS mapping_rule CASCADE;
-DROP TABLE IF EXISTS compatibility_issue CASCADE;   -- removed in Layer C connection-check revision
+DROP TABLE IF EXISTS compatibility_reason_item CASCADE;
+DROP TABLE IF EXISTS compatibility_issue CASCADE;   -- predecessor table name
 DROP TABLE IF EXISTS compatibility_result CASCADE;
+DROP TABLE IF EXISTS format_alias CASCADE;
 DROP TABLE IF EXISTS schema_field CASCADE;
 DROP TABLE IF EXISTS api_schema CASCADE;
 DROP TABLE IF EXISTS schema_mapping CASCADE;
@@ -68,6 +70,7 @@ DROP TYPE IF EXISTS api_category_type CASCADE;
 DROP TYPE IF EXISTS schema_direction_type CASCADE;
 DROP TYPE IF EXISTS schema_payload_format CASCADE;
 DROP TYPE IF EXISTS compatibility_level_type CASCADE;
+DROP TYPE IF EXISTS compatibility_reason_severity CASCADE;
 DROP TYPE IF EXISTS transform_output_format CASCADE;
 DROP TYPE IF EXISTS transform_mapping_status CASCADE;
 DROP TYPE IF EXISTS field_transform_type CASCADE;
@@ -113,6 +116,9 @@ CREATE TYPE schema_payload_format AS ENUM ('JSON', 'XML');
 CREATE TYPE compatibility_level_type AS ENUM (
     'COMPATIBLE', 'INCOMPATIBLE', 'MISSING_INFORMATION'
 );
+CREATE TYPE compatibility_reason_severity AS ENUM (
+    'INFO', 'WARNING', 'ERROR'
+);
 
 -- lifecycle of a mapping package (ER Layer E overview)
 CREATE TYPE mapping_lifecycle_status AS ENUM (
@@ -149,6 +155,7 @@ COMMENT ON TYPE schema_direction_type IS 'Custom DataType from capstone schemas.
 COMMENT ON TYPE schema_payload_format IS 'Custom DataType from capstone schemas.format';
 COMMENT ON TYPE compatibility_level_type IS 'API connection check: COMPATIBLE / INCOMPATIBLE / MISSING_INFORMATION';
 COMMENT ON TYPE mapping_lifecycle_status IS 'Custom DataType: mapping package lifecycle';
+COMMENT ON TYPE compatibility_reason_severity IS 'Custom DataType: severity of a structured connection-validation reason';
 COMMENT ON TYPE mapping_completeness IS 'Custom DataType from mapping_engine.SchemaMapping.status';
 COMMENT ON TYPE field_transform_type IS 'Custom DataType from mapping_engine FieldMapping.transform';
 COMMENT ON TYPE confidence_level IS 'Custom DataType from mapping_engine FieldMapping.confidence';
@@ -459,6 +466,25 @@ CREATE TABLE schema_field (
 
 COMMENT ON TABLE schema_field IS 'ER Layer C (optional): extracted field tree for display/mapping; not used for connection decision';
 
+-- Stage 2 vocabulary: normalizes free-text api_version format arrays.
+CREATE TABLE format_alias (
+    alias_id               SERIAL PRIMARY KEY,
+    raw_value              VARCHAR(100) NOT NULL,
+    normalized_value       VARCHAR(100) NOT NULL,
+    family                 VARCHAR(50) NOT NULL,
+    is_terminal_output     BOOLEAN NOT NULL DEFAULT FALSE,
+    notes                  TEXT,
+
+    CONSTRAINT chk_format_alias_raw_not_blank CHECK (btrim(raw_value) <> ''),
+    CONSTRAINT chk_format_alias_normalized CHECK (normalized_value ~ '^[A-Z][A-Z0-9_]*$'),
+    CONSTRAINT chk_format_alias_family CHECK (family ~ '^[A-Z][A-Z0-9_]*$')
+);
+
+CREATE UNIQUE INDEX uq_format_alias_raw_ci ON format_alias (lower(btrim(raw_value)));
+
+COMMENT ON TABLE format_alias IS 'Stage 2 vocabulary for deterministic comparison of free-text input/output format values';
+COMMENT ON COLUMN format_alias.is_terminal_output IS 'TRUE when the value is a terminal report/result that must not feed another API';
+
 -- associative entity: compatibility_result — version-pair connection check
 CREATE TABLE compatibility_result (
     result_id              SERIAL PRIMARY KEY,
@@ -470,12 +496,15 @@ CREATE TABLE compatibility_result (
     source_schema_id       INT,
     target_schema_id       INT,
     compatibility_level    compatibility_level_type NOT NULL,
+    reason_code            VARCHAR(100) NOT NULL,
     reason                 TEXT NOT NULL,
+    reason_details         JSONB,
     summary                JSONB,
     full_result            JSONB,
     created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT chk_compat_not_same_api CHECK (source_api_id <> target_api_id),
+    CONSTRAINT chk_compat_reason_code CHECK (reason_code ~ '^[A-Z][A-Z0-9_]*$'),
     CONSTRAINT uq_compat_version_pair UNIQUE (source_version_id, target_version_id),
     CONSTRAINT fk_compat_source_api
         FOREIGN KEY (source_api_id) REFERENCES api_submission (api_id)
@@ -498,9 +527,33 @@ CREATE TABLE compatibility_result (
 );
 
 COMMENT ON TABLE compatibility_result IS 'ER Layer C: API A.output → B.input connection check; keyed by version pair; reason required';
+COMMENT ON COLUMN compatibility_result.reason_code IS 'Stable machine-readable primary reason for the final decision';
 COMMENT ON COLUMN compatibility_result.reason IS 'Human-readable explanation for UI (format / capability / missing metadata)';
+COMMENT ON COLUMN compatibility_result.reason_details IS 'Structured values used to render and diagnose the primary reason';
 COMMENT ON COLUMN compatibility_result.source_schema_id IS 'Optional; connection check does not depend on schema compare';
 COMMENT ON COLUMN compatibility_result.target_schema_id IS 'Optional; connection check does not depend on schema compare';
+
+-- Ordered structured diagnostics for all failed, skipped, or mapping-required checks.
+CREATE TABLE compatibility_reason_item (
+    reason_item_id         SERIAL PRIMARY KEY,
+    result_id              INT NOT NULL,
+    reason_code            VARCHAR(100) NOT NULL,
+    stage                  VARCHAR(50) NOT NULL,
+    severity               compatibility_reason_severity NOT NULL,
+    source_path            VARCHAR(512),
+    target_path            VARCHAR(512),
+    message                TEXT NOT NULL,
+    details                JSONB,
+    created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT chk_reason_item_code CHECK (reason_code ~ '^[A-Z][A-Z0-9_]*$'),
+    CONSTRAINT chk_reason_item_stage CHECK (stage ~ '^[A-Z][A-Z0-9_]*$'),
+    CONSTRAINT fk_reason_item_result
+        FOREIGN KEY (result_id) REFERENCES compatibility_result (result_id)
+        ON DELETE CASCADE
+);
+
+COMMENT ON TABLE compatibility_reason_item IS 'Structured, queryable diagnostics for a connection compatibility decision';
 
 -- ============================================================
 -- LAYER E — Schema Mapping & Transform
@@ -652,10 +705,16 @@ CREATE INDEX idx_api_schema_version ON api_schema (version_id);
 CREATE INDEX idx_schema_field_schema ON schema_field (schema_id);
 CREATE INDEX idx_schema_field_path ON schema_field (field_path);
 
+CREATE INDEX idx_format_alias_normalized ON format_alias (normalized_value);
+CREATE INDEX idx_format_alias_family ON format_alias (family);
+
 CREATE INDEX idx_compat_source_api ON compatibility_result (source_api_id);
 CREATE INDEX idx_compat_target_api ON compatibility_result (target_api_id);
 CREATE INDEX idx_compat_source_version ON compatibility_result (source_version_id);
 CREATE INDEX idx_compat_target_version ON compatibility_result (target_version_id);
+CREATE INDEX idx_compat_reason_code ON compatibility_result (reason_code);
+CREATE INDEX idx_compat_reason_item_result ON compatibility_reason_item (result_id);
+CREATE INDEX idx_compat_reason_item_code ON compatibility_reason_item (reason_code);
 
 CREATE INDEX idx_sm_source_api ON schema_mapping (source_api_id);
 CREATE INDEX idx_sm_target_api ON schema_mapping (target_api_id);
@@ -670,6 +729,16 @@ CREATE INDEX idx_tr_created ON transform_run (created_at DESC);
 -- ============================================================
 -- SAMPLE DATA (matches ER relationships)
 -- ============================================================
+
+INSERT INTO format_alias (raw_value, normalized_value, family, is_terminal_output, notes) VALUES
+    ('JSON', 'JSON', 'JSON', FALSE, 'Canonical JSON payload'),
+    ('JSON payload', 'JSON', 'JSON', FALSE, 'Catalogue alias'),
+    ('XML', 'XML', 'XML', FALSE, 'Canonical XML payload'),
+    ('UBL', 'UBL', 'UBL', FALSE, 'Generic UBL document'),
+    ('UBL XML', 'UBL_XML', 'UBL', FALSE, 'UBL serialized as XML'),
+    ('UBL XML format', 'UBL_XML', 'UBL', FALSE, 'Catalogue alias'),
+    ('PDF', 'PDF', 'DOCUMENT', TRUE, 'Human-readable terminal document'),
+    ('Validation Report', 'VALIDATION_REPORT', 'REPORT', TRUE, 'Terminal validation output');
 
 INSERT INTO enterprise (name, registration_number, website_url, status) VALUES
     ('Demo Supply Chain Enterprise', 'ENT-0001', 'https://example.com', 'ACTIVE'),
@@ -822,14 +891,24 @@ INSERT INTO schema_field (schema_id, field_path, field_name, field_type, is_requ
 INSERT INTO compatibility_result (
     source_api_id, target_api_id, source_version_id, target_version_id,
     source_schema_id, target_schema_id,
-    compatibility_level, reason, summary, full_result
+    compatibility_level, reason_code, reason, reason_details, summary, full_result
 ) VALUES (
     2, 3, 4, 5,
     NULL, NULL,
     'INCOMPATIBLE',
+    'FORMAT_TERMINAL_OUTPUT',
     'Source output format (Validation Report) does not match target input format (UBL).',
+    '{"source_output":"VALIDATION_REPORT","target_input":"UBL"}'::jsonb,
     '{"format_check":"fail","capability_check":"skipped"}'::jsonb,
     '{"source_output":"Validation Report","target_input":"UBL","source_capability":"validation","target_capability":"communication"}'::jsonb
+);
+
+INSERT INTO compatibility_reason_item (
+    result_id, reason_code, stage, severity, message, details
+) VALUES (
+    1, 'FORMAT_TERMINAL_OUTPUT', 'FORMAT_CHECK', 'ERROR',
+    'Validation Report is a terminal output and cannot be used as a downstream API payload.',
+    '{"source_output":"VALIDATION_REPORT","target_input":"UBL"}'::jsonb
 );
 
 -- Layer E: mapping package independent of connection check (weak coupling: no required FK)
@@ -883,7 +962,7 @@ WHERE api_id = 1
 ORDER BY created_at;
 
 -- C: API-to-API connection check (version pair + reason)
-SELECT cr.result_id, cr.compatibility_level, cr.reason,
+SELECT cr.result_id, cr.compatibility_level, cr.reason_code, cr.reason,
        sv.api_name AS source_api, sv.output_format AS source_output,
        tv.api_name AS target_api, tv.input_format AS target_input
 FROM compatibility_result cr
