@@ -32,6 +32,7 @@
 -- DROP (children -> parents)
 -- ------------------------------------------------------------
 DROP FUNCTION IF EXISTS enforce_connection_schema_roles() CASCADE;
+DROP FUNCTION IF EXISTS mark_mappings_stale_for_new_version() CASCADE;
 DROP TABLE IF EXISTS transform_run CASCADE;
 DROP TABLE IF EXISTS mapping_rule CASCADE;
 DROP TABLE IF EXISTS connection_validation_stage_result CASCADE;
@@ -142,7 +143,7 @@ CREATE TYPE connection_validation_stage_status AS ENUM (
 
 -- lifecycle of a mapping package (ER Layer E overview)
 CREATE TYPE mapping_lifecycle_status AS ENUM (
-    'DRAFT', 'ACTIVE', 'FAILED', 'DEPRECATED'
+    'DRAFT', 'VALIDATING', 'ACTIVE', 'FAILED', 'STALE', 'DEPRECATED'
 );
 -- engine completeness (mapping_engine.SchemaMapping.status)
 CREATE TYPE mapping_completeness AS ENUM (
@@ -667,6 +668,9 @@ CREATE TABLE schema_mapping (
     updated_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT chk_schema_mapping_not_same_api CHECK (source_api_id <> target_api_id),
+    CONSTRAINT chk_active_mapping_complete CHECK (
+        lifecycle_status <> 'ACTIVE' OR completeness = 'FULL'
+    ),
     CONSTRAINT uq_schema_mapping_schema_pair
         UNIQUE (source_schema_id, target_schema_id),
     CONSTRAINT fk_sm_source_api
@@ -696,6 +700,7 @@ CREATE TABLE schema_mapping (
 
 COMMENT ON TABLE schema_mapping IS 'ER Layer E: API-pair mapping overview; optional weak FK to connection check; field rules in mapping_rule';
 COMMENT ON COLUMN schema_mapping.compatibility_result_id IS 'Optional; Layer E does not require Layer C field compare';
+COMMENT ON CONSTRAINT uq_schema_mapping_schema_pair ON schema_mapping IS 'A schema pair identifies one mapping package; schema ownership binds the pair to its source/target versions';
 
 -- Enforce the directional schema contract that cannot be expressed by simple FKs.
 CREATE FUNCTION enforce_connection_schema_roles()
@@ -746,6 +751,35 @@ CREATE TRIGGER trg_mapping_schema_roles
     FOR EACH ROW EXECUTE FUNCTION enforce_connection_schema_roles();
 
 COMMENT ON FUNCTION enforce_connection_schema_roles() IS 'Ensures connection source schemas are OUTPUT and target schemas are INPUT for the selected API versions';
+
+-- Publishing a new endpoint version invalidates active mappings on older versions.
+CREATE FUNCTION mark_mappings_stale_for_new_version()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.status = 'PUBLISHED'
+       AND (TG_OP = 'INSERT' OR OLD.status IS DISTINCT FROM NEW.status) THEN
+        UPDATE schema_mapping
+        SET lifecycle_status = 'STALE',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE lifecycle_status = 'ACTIVE'
+          AND (
+              (source_api_id = NEW.api_id AND source_version_id <> NEW.version_id)
+              OR
+              (target_api_id = NEW.api_id AND target_version_id <> NEW.version_id)
+          );
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_stale_mappings_on_version_publish
+    AFTER INSERT OR UPDATE OF status ON api_version
+    FOR EACH ROW EXECUTE FUNCTION mark_mappings_stale_for_new_version();
+
+COMMENT ON FUNCTION mark_mappings_stale_for_new_version() IS 'Marks active mappings stale only when a different API version becomes published';
 
 -- weak entity: mapping_rule (N:1 schema_mapping)  [was: mapping_rules]
 -- Normalized: API/version identity comes from parent schema_mapping (no duplicate FKs)
