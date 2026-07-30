@@ -24,6 +24,10 @@ def get_connection_validation_service() -> ConnectionValidationService:
     return ConnectionValidationService(PostgresConnectionValidationRepository())
 
 
+def _not_found_detail(exc: ConnectionValidationNotFoundError) -> dict[str, str]:
+    return {"reason_code": exc.reason_code, "message": str(exc)}
+
+
 @router.post("/runs", response_model=ConnectionValidationResponse)
 def validate_connection_endpoint(
     request: ConnectionValidationRequest,
@@ -38,7 +42,7 @@ def validate_connection_endpoint(
             is_admin=str(current_user["role"]).upper() == "ADMIN",
         )
     except ConnectionValidationNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=_not_found_detail(exc)) from exc
     except ConnectionValidationPermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ConnectionValidationConflictError as exc:
@@ -58,7 +62,7 @@ def get_validation_run_endpoint(
             is_admin=str(current_user["role"]).upper() == "ADMIN",
         )
     except ConnectionValidationNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=_not_found_detail(exc)) from exc
     except ConnectionValidationPermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -76,7 +80,7 @@ def get_connection_endpoint(
             is_admin=str(current_user["role"]).upper() == "ADMIN",
         )
     except ConnectionValidationNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=_not_found_detail(exc)) from exc
     except ConnectionValidationPermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -101,7 +105,7 @@ def list_connection_runs_endpoint(
             is_admin=str(current_user["role"]).upper() == "ADMIN",
         )
     except ConnectionValidationNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=_not_found_detail(exc)) from exc
     except ConnectionValidationPermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -122,7 +126,7 @@ def deprecate_connection_endpoint(
             is_admin=str(current_user["role"]).upper() == "ADMIN",
         )
     except ConnectionValidationNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=_not_found_detail(exc)) from exc
     except ConnectionValidationPermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ConnectionValidationConflictError as exc:

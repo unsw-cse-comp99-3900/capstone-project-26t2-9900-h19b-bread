@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from app.connection_validation import (
     CompatibilityLevel,
     ConnectionValidationConflictError,
+    ConnectionValidationNotFoundError,
     ConnectionValidationResponse,
     ConnectionValidationStage,
     ConnectionValidationStageStatus,
@@ -165,6 +166,43 @@ def test_connection_validation_endpoint_returns_conflict_for_invalid_pair():
 
     assert response.status_code == 409
     assert response.json()["detail"] == "Source and target must be different APIs."
+
+
+def test_connection_validation_endpoint_returns_machine_readable_not_found_code():
+    class NotFoundService(FakeService):
+        def validate(self, request, *, actor_id, enterprise_id, is_admin=False):
+            raise ConnectionValidationNotFoundError(
+                "Target API 2 version 999 was not found.",
+                "TARGET_VERSION_NOT_FOUND",
+            )
+
+    app.dependency_overrides[get_connection_validation_service] = lambda: NotFoundService()
+    app.dependency_overrides[get_connection_validation_actor] = lambda: {
+        "user_id": 5,
+        "enterprise_id": 9,
+        "role": "PUBLISHER",
+    }
+    client = TestClient(app)
+
+    try:
+        response = client.post(
+            "/api/v1/connection-validation/runs",
+            json={
+                "source_api_id": 1,
+                "source_version_id": 10,
+                "target_api_id": 2,
+                "target_version_id": 999,
+                "sample_data": {"id": "INV-1"},
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == {
+        "reason_code": "TARGET_VERSION_NOT_FOUND",
+        "message": "Target API 2 version 999 was not found.",
+    }
 
 
 def test_connection_lifecycle_endpoints_return_current_state():

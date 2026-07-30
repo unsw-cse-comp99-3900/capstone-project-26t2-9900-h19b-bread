@@ -14,7 +14,9 @@ from app.connection_validation.schemas import (
 
 
 class ConnectionValidationNotFoundError(LookupError):
-    pass
+    def __init__(self, message: str, reason_code: str = "RESOURCE_NOT_FOUND") -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
 class ConnectionValidationConflictError(ValueError):

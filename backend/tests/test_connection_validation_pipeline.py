@@ -143,6 +143,23 @@ def test_unknown_format_blocks_when_no_known_path_exists():
     assert decision.reason_code == "FORMAT_ALIAS_MISSING"
 
 
+def test_empty_source_output_formats_stops_pipeline_as_missing_information():
+    context = _context(
+        source=EndpointVersion(1, 10, "PUBLISHED", [], []),
+    )
+
+    decision = _pipeline().run(context)
+
+    assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
+    assert decision.reason_code == "SOURCE_OUTPUT_FORMAT_MISSING"
+    assert decision.activation_allowed is False
+    assert decision.stages[1].status == ConnectionValidationStageStatus.MISSING_INFORMATION
+    assert all(
+        stage.status == ConnectionValidationStageStatus.NOT_RUN
+        for stage in decision.stages[2:5]
+    )
+
+
 def test_missing_schema_is_missing_information_not_incompatible():
     decision = _pipeline().run(_context(source_schema=None))
 

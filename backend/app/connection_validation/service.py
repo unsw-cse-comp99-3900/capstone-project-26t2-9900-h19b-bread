@@ -54,7 +54,8 @@ class ConnectionValidationService:
         )
         if source is None:
             raise ConnectionValidationNotFoundError(
-                f"Source API {request.source_api_id} version {request.source_version_id} was not found."
+                f"Source API {request.source_api_id} version {request.source_version_id} was not found.",
+                "SOURCE_VERSION_NOT_FOUND",
             )
         target = self.repository.get_version(
             request.target_api_id,
@@ -62,7 +63,8 @@ class ConnectionValidationService:
         )
         if target is None:
             raise ConnectionValidationNotFoundError(
-                f"Target API {request.target_api_id} version {request.target_version_id} was not found."
+                f"Target API {request.target_api_id} version {request.target_version_id} was not found.",
+                "TARGET_VERSION_NOT_FOUND",
             )
         if request.source_api_id == request.target_api_id:
             raise ConnectionValidationConflictError(

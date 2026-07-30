@@ -160,9 +160,10 @@ def test_service_rejects_unknown_version_before_creating_run():
     repository.source = None
     service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
 
-    with pytest.raises(ConnectionValidationNotFoundError):
+    with pytest.raises(ConnectionValidationNotFoundError) as exc_info:
         service.validate(_request(), actor_id=5, enterprise_id=9)
 
+    assert exc_info.value.reason_code == "SOURCE_VERSION_NOT_FOUND"
     assert repository.saved is None
 
 
