@@ -165,6 +165,31 @@ def test_mapping_compatible_schema_requires_complete_mapping():
     assert schema_issues[0]["target_path"] == "invoice_id"
 
 
+def test_required_target_field_optional_in_source_requires_mapping():
+    source = PayloadSchema(
+        schema_id=100,
+        direction="OUTPUT",
+        format="JSON",
+        definition={
+            "type": "object",
+            "properties": {"id": {"type": "string"}},
+            "required": [],
+        },
+    )
+    target = _schema(200, "INPUT", {"id": {"type": "string"}})
+
+    decision = _pipeline().run(_context(source_schema=source, target_schema=target))
+
+    assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
+    assert decision.reason_code == "MAPPING_REQUIRED"
+    issues = decision.stages[2].payload["issues"]
+    assert [issue["reason_code"] for issue in issues] == [
+        "REQUIRED_OPTIONAL_CONFLICT"
+    ]
+    assert issues[0]["source_path"] == "id"
+    assert issues[0]["target_path"] == "id"
+
+
 def test_complete_mapping_must_also_pass_target_validation():
     target = _schema(200, "INPUT", {"invoice_id": {"type": "string"}})
     mapping = MappingContext(

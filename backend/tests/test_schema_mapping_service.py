@@ -76,6 +76,37 @@ def test_compare_schema_pair_detects_rename_mapping():
     assert result["issues"][0]["target_path"] == "user_id"
 
 
+def test_compare_schema_pair_detects_required_optional_conflict():
+    source = {
+        "type": "object",
+        "properties": {"id": {"type": "string"}},
+        "required": [],
+    }
+    target = {
+        "type": "object",
+        "properties": {"id": {"type": "string"}},
+        "required": ["id"],
+    }
+
+    result = compare_schema_pair(source, target)
+
+    assert result["compatibility"] == "compatible_with_mapping"
+    assert result["issues"] == [
+        {
+            "code": "required_optional_conflict",
+            "kind": "mapping",
+            "severity": "warning",
+            "source_path": "id",
+            "target_path": "id",
+            "message": "Target field 'id' is required, but source field 'id' is optional.",
+            "suggestion": (
+                "Provide a complete mapping with a reliable fallback and validate the "
+                "result against the target schema."
+            ),
+        }
+    ]
+
+
 def test_transform_preview_casts_and_renames_without_database():
     source = _object_schema(
         {
