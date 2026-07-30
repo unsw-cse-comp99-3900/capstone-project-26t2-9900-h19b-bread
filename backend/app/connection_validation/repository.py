@@ -9,6 +9,7 @@ from app.connection_validation.schemas import (
     EndpointVersion,
     FormatAlias,
     PayloadSchema,
+    PersistedDecision,
 )
 
 
@@ -64,13 +65,27 @@ class ConnectionValidationRepository(Protocol):
     ) -> int:
         ...
 
+    def prepare_mapping(
+        self,
+        request: ConnectionValidationRequest,
+        source_schema: PayloadSchema,
+        target_schema: PayloadSchema,
+    ) -> dict:
+        ...
+
+    def get_connection(self, mapping_id: int) -> dict | None:
+        ...
+
+    def deprecate_connection(self, mapping_id: int) -> dict | None:
+        ...
+
     def save_decision(
         self,
         run_id: int,
         request: ConnectionValidationRequest,
         context: ConnectionValidationContext,
         decision: ConnectionValidationDecision,
-    ) -> int:
+    ) -> PersistedDecision:
         ...
 
     def cancel_run(self, run_id: int) -> None:

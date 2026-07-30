@@ -19,6 +19,7 @@ from app.connection_validation.schemas import (
     EndpointVersion,
     FormatAlias,
     PayloadSchema,
+    PersistedDecision,
 )
 from app.core.database import get_connection
 from app.services.schema_mapping.repository import PostgresSchemaMappingRepository
@@ -194,6 +195,10 @@ class PostgresConnectionValidationRepository:
         with self.connection_factory() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
+                    "SELECT pg_advisory_xact_lock(%s, %s)",
+                    (request.source_version_id, request.target_version_id),
+                )
+                cursor.execute(
                     """
                     INSERT INTO connection_validation_run (
                         source_api_id, target_api_id, source_version_id, target_version_id,
@@ -212,13 +217,98 @@ class PostgresConnectionValidationRepository:
                 )
                 return cursor.fetchone()["connection_validation_run_id"]
 
+    def prepare_mapping(
+        self,
+        request: ConnectionValidationRequest,
+        source_schema: PayloadSchema,
+        target_schema: PayloadSchema,
+    ) -> dict[str, Any]:
+        with self.connection_factory() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(%s, %s)",
+                    (request.source_version_id, request.target_version_id),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO schema_mapping (
+                        source_api_id, target_api_id, source_version_id, target_version_id,
+                        source_schema_id, target_schema_id, source_schema_format,
+                        target_schema_format, overview_note, lifecycle_status, completeness
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'VALIDATING', 'PARTIAL')
+                    ON CONFLICT (source_schema_id, target_schema_id)
+                    DO UPDATE SET
+                        lifecycle_status = CASE
+                            WHEN schema_mapping.lifecycle_status = 'DEPRECATED'
+                                THEN schema_mapping.lifecycle_status
+                            ELSE 'VALIDATING'::mapping_lifecycle_status
+                        END,
+                        updated_at = CURRENT_TIMESTAMP
+                    RETURNING mapping_id, lifecycle_status, completeness
+                    """,
+                    (
+                        request.source_api_id,
+                        request.target_api_id,
+                        request.source_version_id,
+                        request.target_version_id,
+                        source_schema.schema_id,
+                        target_schema.schema_id,
+                        source_schema.format,
+                        target_schema.format,
+                        "Connection validation lifecycle record.",
+                    ),
+                )
+                mapping = cursor.fetchone()
+        if mapping["lifecycle_status"] == "DEPRECATED":
+            raise ConnectionValidationConflictError(
+                "Deprecated connections cannot be revalidated. Create a new version-pair connection."
+            )
+        return mapping
+
+    def get_connection(self, mapping_id: int) -> dict[str, Any] | None:
+        with self.connection_factory() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT mapping.mapping_id, mapping.source_api_id,
+                           mapping.source_version_id, mapping.target_api_id,
+                           mapping.target_version_id, mapping.source_schema_id,
+                           mapping.target_schema_id, mapping.compatibility_result_id,
+                           mapping.lifecycle_status, mapping.completeness,
+                           mapping.updated_at, source.enterprise_id AS source_enterprise_id
+                    FROM schema_mapping mapping
+                    JOIN api_submission source ON source.api_id = mapping.source_api_id
+                    WHERE mapping.mapping_id = %s
+                    """,
+                    (mapping_id,),
+                )
+                return cursor.fetchone()
+
+    def deprecate_connection(self, mapping_id: int) -> dict[str, Any] | None:
+        with self.connection_factory() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE schema_mapping
+                    SET lifecycle_status = 'DEPRECATED', updated_at = CURRENT_TIMESTAMP
+                    WHERE mapping_id = %s
+                      AND lifecycle_status <> 'VALIDATING'
+                    RETURNING mapping_id
+                    """,
+                    (mapping_id,),
+                )
+                updated = cursor.fetchone()
+        if updated is None:
+            return None
+        return self.get_connection(mapping_id)
+
     def save_decision(
         self,
         run_id: int,
         request: ConnectionValidationRequest,
         context: ConnectionValidationContext,
         decision: ConnectionValidationDecision,
-    ) -> int:
+    ) -> PersistedDecision:
         response_summary = {
             "activation_allowed": decision.activation_allowed,
             "reason_code": decision.reason_code,
@@ -236,6 +326,53 @@ class PostgresConnectionValidationRepository:
         }
         with self.connection_factory() as connection:
             with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(%s, %s)",
+                    (request.source_version_id, request.target_version_id),
+                )
+                cursor.execute(
+                    """
+                    SELECT connection_validation_run_id
+                    FROM connection_validation_run
+                    WHERE source_version_id = %s AND target_version_id = %s
+                    ORDER BY started_at DESC, connection_validation_run_id DESC
+                    LIMIT 1
+                    FOR UPDATE
+                    """,
+                    (request.source_version_id, request.target_version_id),
+                )
+                latest = cursor.fetchone()
+                is_latest = (
+                    latest is not None
+                    and latest["connection_validation_run_id"] == run_id
+                )
+
+                self._save_stage_results(cursor, run_id, decision)
+                if not is_latest:
+                    cursor.execute(
+                        """
+                        UPDATE connection_validation_run
+                        SET status = 'STALE', completed_at = CURRENT_TIMESTAMP
+                        WHERE connection_validation_run_id = %s
+                        """,
+                        (run_id,),
+                    )
+                    mapping_id = context.mapping.mapping_id if context.mapping else None
+                    lifecycle_status = None
+                    if mapping_id is not None:
+                        cursor.execute(
+                            "SELECT lifecycle_status FROM schema_mapping WHERE mapping_id = %s",
+                            (mapping_id,),
+                        )
+                        mapping_row = cursor.fetchone()
+                        lifecycle_status = mapping_row["lifecycle_status"] if mapping_row else None
+                    return PersistedDecision(
+                        compatibility_result_id=None,
+                        mapping_id=mapping_id,
+                        lifecycle_status=lifecycle_status,
+                        is_latest_run=False,
+                    )
+
                 cursor.execute(
                     """
                     INSERT INTO compatibility_result (
@@ -299,26 +436,31 @@ class PostgresConnectionValidationRepository:
                         ),
                     )
 
-                for stage in decision.stages:
+                mapping_id = context.mapping.mapping_id if context.mapping else None
+                lifecycle_status = None
+                if mapping_id is not None:
+                    lifecycle_status = "ACTIVE" if decision.activation_allowed else "FAILED"
                     cursor.execute(
                         """
-                        INSERT INTO connection_validation_stage_result (
-                            connection_validation_run_id, stage, status, message, payload
-                        ) VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (connection_validation_run_id, stage)
-                        DO UPDATE SET
-                            status = EXCLUDED.status,
-                            message = EXCLUDED.message,
-                            payload = EXCLUDED.payload
+                        UPDATE schema_mapping
+                        SET compatibility_result_id = %s,
+                            lifecycle_status = %s,
+                            completeness = CASE
+                                WHEN %s = 'DIRECTLY_COMPATIBLE' THEN 'FULL'::mapping_completeness
+                                ELSE completeness
+                            END,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE mapping_id = %s
+                          AND lifecycle_status <> 'DEPRECATED'
                         """,
-                        (
-                            run_id,
-                            stage.stage.value,
-                            stage.status.value,
-                            stage.message,
-                            Jsonb(stage.payload),
-                        ),
+                        (result_id, lifecycle_status, decision.reason_code, mapping_id),
                     )
+                    cursor.execute(
+                        "SELECT lifecycle_status FROM schema_mapping WHERE mapping_id = %s",
+                        (mapping_id,),
+                    )
+                    mapping_row = cursor.fetchone()
+                    lifecycle_status = mapping_row["lifecycle_status"] if mapping_row else None
 
                 run_status = (
                     "PASSED"
@@ -335,7 +477,12 @@ class PostgresConnectionValidationRepository:
                     """,
                     (result_id, run_status, run_id),
                 )
-                return result_id
+                return PersistedDecision(
+                    compatibility_result_id=result_id,
+                    mapping_id=mapping_id,
+                    lifecycle_status=lifecycle_status,
+                    is_latest_run=True,
+                )
 
     def cancel_run(self, run_id: int) -> None:
         with self.connection_factory() as connection:
@@ -349,3 +496,45 @@ class PostgresConnectionValidationRepository:
                     """,
                     (run_id,),
                 )
+                cursor.execute(
+                    """
+                    UPDATE schema_mapping mapping
+                    SET lifecycle_status = 'FAILED', updated_at = CURRENT_TIMESTAMP
+                    FROM connection_validation_run run
+                    WHERE run.connection_validation_run_id = %s
+                      AND mapping.source_version_id = run.source_version_id
+                      AND mapping.target_version_id = run.target_version_id
+                      AND mapping.lifecycle_status = 'VALIDATING'
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM connection_validation_run newer
+                          WHERE newer.source_version_id = run.source_version_id
+                            AND newer.target_version_id = run.target_version_id
+                            AND newer.connection_validation_run_id > run.connection_validation_run_id
+                      )
+                    """,
+                    (run_id,),
+                )
+
+    @staticmethod
+    def _save_stage_results(cursor, run_id: int, decision: ConnectionValidationDecision) -> None:
+        for stage in decision.stages:
+            cursor.execute(
+                """
+                INSERT INTO connection_validation_stage_result (
+                    connection_validation_run_id, stage, status, message, payload
+                ) VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (connection_validation_run_id, stage)
+                DO UPDATE SET
+                    status = EXCLUDED.status,
+                    message = EXCLUDED.message,
+                    payload = EXCLUDED.payload
+                """,
+                (
+                    run_id,
+                    stage.stage.value,
+                    stage.status.value,
+                    stage.message,
+                    Jsonb(stage.payload),
+                ),
+            )

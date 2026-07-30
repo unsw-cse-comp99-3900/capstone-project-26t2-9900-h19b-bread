@@ -207,6 +207,7 @@ class LifecycleService:
                 actor_id=actor_id,
                 reason=reason,
             )
+            self.repository.deprecate_api_connections(api_id)
             self.repository.update_version_status(version_id, ApiVersionStatus.ARCHIVED)
             self.repository.create_version_event(
                 api_id,

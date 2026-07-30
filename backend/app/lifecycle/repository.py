@@ -38,6 +38,9 @@ class LifecycleRepository(Protocol):
     ) -> None:
         """Update api_submission withdrawn_* fields and status."""
 
+    def deprecate_api_connections(self, api_id: int) -> None:
+        """Deprecate every connection that depends on a withdrawn API."""
+
     def get_current_version_id(self, api_id: int) -> int | None:
         """Return the active/latest api_version.version_id for the API."""
 

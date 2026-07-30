@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Callable
 
 from pydantic import BaseModel, Field
@@ -44,7 +45,10 @@ class ReasonItem(BaseModel):
 
 class ConnectionValidationResponse(BaseModel):
     connection_validation_run_id: int
-    compatibility_result_id: int
+    compatibility_result_id: int | None = None
+    mapping_id: int | None = None
+    lifecycle_status: str | None = None
+    is_latest_run: bool = True
     compatibility_level: CompatibilityLevel
     reason_code: str
     reason: str
@@ -57,6 +61,20 @@ class ConnectionValidationResponse(BaseModel):
     target_schema_id: int | None = None
     stages: list[StageResult]
     reasons: list[ReasonItem]
+
+
+class ConnectionLifecycleResponse(BaseModel):
+    mapping_id: int
+    source_api_id: int
+    source_version_id: int
+    target_api_id: int
+    target_version_id: int
+    source_schema_id: int | None = None
+    target_schema_id: int | None = None
+    compatibility_result_id: int | None = None
+    lifecycle_status: str
+    completeness: str
+    updated_at: datetime
 
 
 @dataclass(frozen=True)
@@ -112,3 +130,11 @@ class ConnectionValidationDecision:
     stages: list[StageResult]
     reasons: list[ReasonItem] = field(default_factory=list)
     transformed_data: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class PersistedDecision:
+    compatibility_result_id: int | None
+    mapping_id: int | None
+    lifecycle_status: str | None
+    is_latest_run: bool

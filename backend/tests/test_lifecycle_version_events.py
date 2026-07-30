@@ -28,6 +28,7 @@ class FakeLifecycleRepository:
         self.validation_run_id = 90
         self.validation_overall_status = ValidationOverallStatus.RUNNING
         self.validation_stage_statuses = {}
+        self.connections_deprecated = False
 
     @contextmanager
     def transaction(self):
@@ -47,6 +48,9 @@ class FakeLifecycleRepository:
 
     def mark_api_withdrawn(self, api_id, actor_id, reason):
         self.status = ApiStatus.WITHDRAWN
+
+    def deprecate_api_connections(self, api_id):
+        self.connections_deprecated = True
 
     def get_current_version_id(self, api_id):
         return self.version_id
@@ -211,6 +215,7 @@ def test_withdraw_records_archive_event_with_actor() -> None:
     assert repository.events[0]["event_type"] == VersionEventType.ARCHIVED
     assert repository.events[0]["actor_user_id"] == 42
     assert repository.events[0]["to_status"].value == "ARCHIVED"
+    assert repository.connections_deprecated is True
 
 
 def test_rejected_api_can_be_withdrawn() -> None:

@@ -123,6 +123,19 @@ class PostgresLifecycleRepository:
                     (ApiStatus.WITHDRAWN.value, reason, actor_id, api_id),
                 )
 
+    def deprecate_api_connections(self, api_id: int) -> None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE schema_mapping
+                    SET lifecycle_status = 'DEPRECATED', updated_at = CURRENT_TIMESTAMP
+                    WHERE (source_api_id = %s OR target_api_id = %s)
+                      AND lifecycle_status <> 'DEPRECATED'
+                    """,
+                    (api_id, api_id),
+                )
+
     def get_current_version_id(self, api_id: int) -> int | None:
         with self._connection() as connection:
             with connection.cursor() as cursor:
