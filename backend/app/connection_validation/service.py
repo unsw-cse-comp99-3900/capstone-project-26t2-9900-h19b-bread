@@ -130,6 +130,7 @@ class ConnectionValidationService:
         return ConnectionValidationResponse(
             connection_validation_run_id=run_id,
             compatibility_result_id=persisted.compatibility_result_id,
+            transform_run_id=persisted.transform_run_id,
             mapping_id=persisted.mapping_id,
             lifecycle_status=persisted.lifecycle_status,
             is_latest_run=persisted.is_latest_run,

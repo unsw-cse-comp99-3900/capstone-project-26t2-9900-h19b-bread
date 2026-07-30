@@ -16,7 +16,9 @@ from app.connection_validation.schemas import (
     FormatAlias,
     ReasonItem,
     StageResult,
+    TransformExecution,
 )
+from app.services.schema_mapping.schema_transformer import serialize_to_xml
 
 
 SchemaComparator = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
@@ -73,13 +75,20 @@ class ConnectionValidationPipeline:
         }:
             return self._halt(context, stages, reasons, mapping_result)
 
-        target_result, transformed_data = self._target_validation(
+        target_result, transformed_data, transform_execution = self._target_validation(
             context,
             mapping_required,
         )
         stages.append(target_result)
         if target_result.status != ConnectionValidationStageStatus.PASSED:
-            return self._halt(context, stages, reasons, target_result)
+            return self._halt(
+                context,
+                stages,
+                reasons,
+                target_result,
+                transformed_data=transformed_data,
+                transform_execution=transform_execution,
+            )
 
         reason_code = "COMPATIBLE_WITH_MAPPING" if mapping_required else "DIRECTLY_COMPATIBLE"
         reason = (
@@ -102,6 +111,7 @@ class ConnectionValidationPipeline:
             stages=stages,
             reasons=reasons,
             transformed_data=transformed_data,
+            transform_execution=transform_execution,
         )
 
     def _eligibility(self, context: ConnectionValidationContext) -> StageResult:
@@ -335,7 +345,7 @@ class ConnectionValidationPipeline:
         self,
         context: ConnectionValidationContext,
         mapping_required: bool,
-    ) -> tuple[StageResult, dict[str, Any] | None]:
+    ) -> tuple[StageResult, dict[str, Any] | None, TransformExecution | None]:
         if context.sample_data is None:
             return (
                 self._stage_missing(
@@ -343,6 +353,7 @@ class ConnectionValidationPipeline:
                     "SAMPLE_DATA_MISSING",
                     "Sample source output is required for target acceptance validation.",
                 ),
+                None,
                 None,
             )
         source_valid, source_error = self.validate_target(
@@ -359,23 +370,57 @@ class ConnectionValidationPipeline:
                     {"validation_scope": "SOURCE"},
                 ),
                 None,
+                None,
             )
+
         transformed = context.sample_data
         if mapping_required:
             try:
                 transformed = context.mapping.transform(context.sample_data)
             except Exception as exc:
+                error = str(exc)
                 return (
                     self._stage_failure(
                         ConnectionValidationStage.TARGET_VALIDATION,
                         "TRANSFORM_FAILED",
                         "The mapping could not transform the sample source output.",
-                        {"error": str(exc)},
+                        {"error": error},
                     ),
                     None,
+                    TransformExecution(
+                        output_format=context.target_schema.format.upper(),
+                        success=False,
+                        error_message=error,
+                    ),
                 )
+
+        transform_execution = self._materialize_transform(
+            context,
+            transformed,
+            mapping_required,
+        )
+        if transform_execution is not None and not transform_execution.success:
+            return (
+                self._stage_failure(
+                    ConnectionValidationStage.TARGET_VALIDATION,
+                    "TRANSFORM_FAILED",
+                    "The transformed payload could not be materialized in the target format.",
+                    {"error": transform_execution.error_message},
+                ),
+                transformed,
+                transform_execution,
+            )
+
         valid, error = self.validate_target(transformed, context.target_schema.definition)
         if not valid:
+            if transform_execution is not None:
+                transform_execution = TransformExecution(
+                    output_format=transform_execution.output_format,
+                    success=False,
+                    output_data=transform_execution.output_data,
+                    output_text=transform_execution.output_text,
+                    error_message=error,
+                )
             return (
                 self._stage_failure(
                     ConnectionValidationStage.TARGET_VALIDATION,
@@ -383,6 +428,7 @@ class ConnectionValidationPipeline:
                     error or "Transformed output does not satisfy the target input schema.",
                 ),
                 transformed,
+                transform_execution,
             )
         return (
             StageResult(
@@ -392,7 +438,39 @@ class ConnectionValidationPipeline:
                 payload={"validation_scope": "SOURCE_AND_TARGET"},
             ),
             transformed,
+            transform_execution,
         )
+
+    @staticmethod
+    def _materialize_transform(
+        context: ConnectionValidationContext,
+        transformed: dict[str, Any],
+        mapping_required: bool,
+    ) -> TransformExecution | None:
+        if not mapping_required:
+            return None
+        output_format = context.target_schema.format.upper()
+        try:
+            return TransformExecution(
+                output_format=output_format,
+                success=True,
+                output_data=transformed if output_format == "JSON" else None,
+                output_text=(
+                    serialize_to_xml(
+                        transformed,
+                        root_tag=context.target_schema.root_path,
+                    )
+                    if output_format == "XML"
+                    else None
+                ),
+            )
+        except Exception as exc:
+            return TransformExecution(
+                output_format=output_format,
+                success=False,
+                output_data=transformed,
+                error_message=str(exc),
+            )
 
     def _halt(
         self,
@@ -400,6 +478,9 @@ class ConnectionValidationPipeline:
         stages: list[StageResult],
         reasons: list[ReasonItem],
         blocker: StageResult,
+        *,
+        transformed_data: dict[str, Any] | None = None,
+        transform_execution: TransformExecution | None = None,
     ) -> ConnectionValidationDecision:
         completed = {result.stage for result in stages}
         for stage in STAGE_ORDER:
@@ -441,6 +522,8 @@ class ConnectionValidationPipeline:
             activation_allowed=False,
             stages=stages,
             reasons=reasons,
+            transformed_data=transformed_data,
+            transform_execution=transform_execution,
         )
 
     @staticmethod

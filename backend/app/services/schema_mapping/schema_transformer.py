@@ -63,16 +63,34 @@ def transform_to_xml(
     root_tag: str = "root",
 ) -> str:
     """Run the transformer and serialise the result to an XML string."""
-    result = transformer(source)
-    root = ET.Element(root_tag)
-    _dict_to_xml(result, root)
+    return serialize_to_xml(transformer(source), root_tag=root_tag)
+
+
+def serialize_to_xml(data: Dict[str, Any], root_tag: str | None = None) -> str:
+    """Serialise a transformed dictionary with a stable, non-duplicated root."""
+    preferred_root = root_tag if _is_xml_name(root_tag) else None
+    payload: Any = data
+    if len(data) == 1:
+        sole_key, sole_value = next(iter(data.items()))
+        if _is_xml_name(sole_key) and (preferred_root is None or preferred_root == sole_key):
+            preferred_root = sole_key
+            payload = sole_value
+
+    root = ET.Element(preferred_root or "root")
+    _dict_to_xml(payload, root)
     ET.indent(root, space="  ")
     return ET.tostring(root, encoding="unicode")
+
+
+def _is_xml_name(value: str | None) -> bool:
+    return bool(value and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", value))
 
 def _dict_to_xml(data: Any, parent: ET.Element) -> None:
     if isinstance(data, dict):
         for key, value in data.items():
-            child = ET.SubElement(parent, key)
+            if not _is_xml_name(str(key)):
+                raise TransformError(f"'{key}' is not a valid XML element name.")
+            child = ET.SubElement(parent, str(key))
             _dict_to_xml(value, child)
     elif isinstance(data, list):
         for item in data:

@@ -98,7 +98,7 @@ class FakeRepository:
 
     def save_decision(self, run_id, request, context, decision):
         self.saved = (run_id, decision)
-        return PersistedDecision(88, 66, "ACTIVE", True)
+        return PersistedDecision(88, 66, "ACTIVE", True, 99)
 
     def cancel_run(self, run_id):
         self.cancelled.append(run_id)
@@ -145,6 +145,7 @@ def test_service_loads_fixed_context_and_persists_decision():
 
     assert response.connection_validation_run_id == 77
     assert response.compatibility_result_id == 88
+    assert response.transform_run_id == 99
     assert response.mapping_id == 66
     assert response.lifecycle_status == "ACTIVE"
     assert response.reason_code == "DIRECTLY_COMPATIBLE"

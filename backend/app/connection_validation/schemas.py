@@ -46,6 +46,7 @@ class ReasonItem(BaseModel):
 class ConnectionValidationResponse(BaseModel):
     connection_validation_run_id: int
     compatibility_result_id: int | None = None
+    transform_run_id: int | None = None
     mapping_id: int | None = None
     lifecycle_status: str | None = None
     is_latest_run: bool = True
@@ -117,6 +118,7 @@ class PayloadSchema:
     direction: str
     format: str
     definition: dict[str, Any]
+    root_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +157,16 @@ class ConnectionValidationDecision:
     stages: list[StageResult]
     reasons: list[ReasonItem] = field(default_factory=list)
     transformed_data: dict[str, Any] | None = None
+    transform_execution: TransformExecution | None = None
+
+
+@dataclass(frozen=True)
+class TransformExecution:
+    output_format: str
+    success: bool
+    output_data: dict[str, Any] | None = None
+    output_text: str | None = None
+    error_message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -163,3 +175,4 @@ class PersistedDecision:
     mapping_id: int | None
     lifecycle_status: str | None
     is_latest_run: bool
+    transform_run_id: int | None = None

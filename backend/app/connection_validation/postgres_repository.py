@@ -108,6 +108,7 @@ class PostgresConnectionValidationRepository:
             direction=row["direction"],
             format=row["format"],
             definition=row["schema_definition"],
+            root_path=row.get("source_path"),
         )
 
     def list_format_aliases(self) -> list[FormatAlias]:
@@ -558,6 +559,13 @@ class PostgresConnectionValidationRepository:
                     mapping_row = cursor.fetchone()
                     lifecycle_status = mapping_row["lifecycle_status"] if mapping_row else None
 
+                transform_run_id = self._save_transform_execution(
+                    cursor,
+                    mapping_id,
+                    request,
+                    context,
+                    decision,
+                )
                 run_status = (
                     "PASSED"
                     if decision.compatibility_level == CompatibilityLevel.COMPATIBLE
@@ -579,6 +587,7 @@ class PostgresConnectionValidationRepository:
                     mapping_id=mapping_id,
                     lifecycle_status=lifecycle_status,
                     is_latest_run=True,
+                    transform_run_id=transform_run_id,
                 )
 
     def cancel_run(self, run_id: int) -> None:
@@ -612,6 +621,51 @@ class PostgresConnectionValidationRepository:
                     """,
                     (run_id,),
                 )
+
+    @staticmethod
+    def _save_transform_execution(
+        cursor,
+        mapping_id: int | None,
+        request: ConnectionValidationRequest,
+        context: ConnectionValidationContext,
+        decision: ConnectionValidationDecision,
+    ) -> int | None:
+        execution = decision.transform_execution
+        if mapping_id is None or context.sample_data is None or execution is None:
+            return None
+        cursor.execute(
+            """
+            INSERT INTO transform_run (
+                schema_mapping_id, source_api_id, target_api_id,
+                source_schema_id, target_schema_id, source_version_id,
+                target_version_id, input_data, output_data, output_text,
+                output_format, mapping_status, warnings, success, error_message
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING transform_run_id
+            """,
+            (
+                mapping_id,
+                request.source_api_id,
+                request.target_api_id,
+                context.source_schema.schema_id if context.source_schema else None,
+                context.target_schema.schema_id if context.target_schema else None,
+                request.source_version_id,
+                request.target_version_id,
+                Jsonb(context.sample_data),
+                (
+                    Jsonb(execution.output_data)
+                    if execution.output_data is not None
+                    else None
+                ),
+                execution.output_text,
+                execution.output_format,
+                context.mapping.completeness.lower() if context.mapping else None,
+                Jsonb([]),
+                execution.success,
+                execution.error_message,
+            ),
+        )
+        return cursor.fetchone()["transform_run_id"]
 
     @staticmethod
     def _save_stage_results(cursor, run_id: int, decision: ConnectionValidationDecision) -> None:

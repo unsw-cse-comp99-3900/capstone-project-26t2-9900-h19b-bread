@@ -172,6 +172,24 @@ def test_complete_mapping_must_also_pass_target_validation():
     assert decision.transformed_data == {"invoice_id": "INV-1"}
 
 
+def test_target_validation_failure_keeps_failed_transform_audit():
+    target = _schema(200, "INPUT", {"invoice_id": {"type": "string"}})
+    mapping = MappingContext(
+        mapping_id=7,
+        lifecycle_status="DRAFT",
+        completeness="FULL",
+        transform=lambda data: {"wrong_field": data["id"]},
+    )
+
+    decision = _pipeline().run(_context(target_schema=target, mapping=mapping))
+
+    assert decision.reason_code == "TARGET_VALIDATION_FAILED"
+    assert decision.transform_execution is not None
+    assert decision.transform_execution.success is False
+    assert decision.transform_execution.output_data == {"wrong_field": "INV-1"}
+    assert decision.transform_execution.error_message
+
+
 def test_invalid_source_sample_stops_before_mapping_transform():
     target = _schema(200, "INPUT", {"invoice_id": {"type": "string"}})
     transform_calls = []
@@ -267,3 +285,74 @@ def test_supported_bridge_uses_machine_readable_option_from_mixed_formats():
     assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
     assert decision.reason_code == "MAPPING_REQUIRED"
     assert decision.stages[1].payload["requires_format_transform"] is True
+
+
+def test_supported_bridge_materializes_target_xml_output():
+    source_schema = _schema(100, "OUTPUT", {"id": {"type": "string"}})
+    target_schema = PayloadSchema(
+        schema_id=200,
+        direction="INPUT",
+        format="XML",
+        definition=source_schema.definition,
+        root_path="invoice",
+    )
+    mapping = MappingContext(
+        mapping_id=7,
+        lifecycle_status="DRAFT",
+        completeness="FULL",
+        transform=lambda data: data,
+    )
+    context = _context(
+        target=EndpointVersion(2, 20, "PUBLISHED", ["XML"], []),
+        target_schema=target_schema,
+        aliases=[
+            FormatAlias("JSON", "JSON", "JSON"),
+            FormatAlias("XML", "XML", "XML"),
+        ],
+        mapping=mapping,
+    )
+
+    decision = _pipeline().run(context)
+
+    assert decision.reason_code == "COMPATIBLE_WITH_MAPPING"
+    assert decision.transform_execution is not None
+    assert decision.transform_execution.success is True
+    assert decision.transform_execution.output_format == "XML"
+    assert decision.transform_execution.output_data is None
+    assert decision.transform_execution.output_text.startswith("<invoice>")
+    assert "<id>INV-1</id>" in decision.transform_execution.output_text
+
+
+def test_xml_materialization_rejects_invalid_element_names():
+    source_schema = _schema(100, "OUTPUT", {"bad key": {"type": "string"}})
+    target_schema = PayloadSchema(
+        schema_id=200,
+        direction="INPUT",
+        format="XML",
+        definition=source_schema.definition,
+        root_path="invoice",
+    )
+    context = _context(
+        source=EndpointVersion(1, 10, "PUBLISHED", [], ["JSON"]),
+        target=EndpointVersion(2, 20, "PUBLISHED", ["XML"], []),
+        source_schema=source_schema,
+        target_schema=target_schema,
+        aliases=[
+            FormatAlias("JSON", "JSON", "JSON"),
+            FormatAlias("XML", "XML", "XML"),
+        ],
+        mapping=MappingContext(
+            mapping_id=7,
+            lifecycle_status="DRAFT",
+            completeness="FULL",
+            transform=lambda data: data,
+        ),
+        sample_data={"bad key": "value"},
+    )
+
+    decision = _pipeline().run(context)
+
+    assert decision.reason_code == "TRANSFORM_FAILED"
+    assert decision.transform_execution is not None
+    assert decision.transform_execution.success is False
+    assert "valid XML element name" in decision.transform_execution.error_message
