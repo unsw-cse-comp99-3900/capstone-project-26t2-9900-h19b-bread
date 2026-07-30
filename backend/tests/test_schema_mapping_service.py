@@ -1,6 +1,7 @@
 import app.services.schema_mapping.service as schema_mapping_service
 from app.services.schema_mapping.mapping_engine import FieldMapping, SchemaMapping
 from app.services.schema_mapping.repository import PostgresSchemaMappingRepository
+from app.services.schema_mapping.schema_transformer import build_transformer
 from app.services.schema_mapping.service import (
     SchemaMappingError,
     build_compatibility_matrix,
@@ -99,6 +100,29 @@ def test_transform_preview_casts_and_renames_without_database():
     assert result["mapping_status"] == "partial"
     assert result["result"] == {"user_id": 7, "amount": 12.5}
     assert "transform_sourceapi_to_targetapi" in result["transform_code"]
+
+
+def test_transformer_supports_persisted_slash_field_paths():
+    mapping = SchemaMapping(
+        source="Source",
+        target="Target",
+        status="full",
+        fields=[
+            FieldMapping(
+                source_path="Invoice/ID",
+                target_path="Invoice/ID",
+                transform="rename",
+                source_type="string",
+                target_type="string",
+                confidence="high",
+                note="Persisted slash path.",
+            )
+        ],
+    )
+
+    transformed = build_transformer(mapping)({"Invoice": {"ID": "INV-100"}})
+
+    assert transformed == {"Invoice": {"ID": "INV-100"}}
 
 
 def test_build_compatibility_matrix_returns_same_schema_diagonal():

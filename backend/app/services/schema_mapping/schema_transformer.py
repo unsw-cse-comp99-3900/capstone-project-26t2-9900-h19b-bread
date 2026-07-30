@@ -19,6 +19,7 @@ Usage
     xml_out  = transform_to_xml(fn, source_document, root_tag="record")
 """
 
+import re
 import xml.etree.ElementTree as ET
 from typing import Any, Callable, Dict, List, Optional
 
@@ -237,9 +238,9 @@ def _set_nested(doc: Dict[str, Any], path: str, value: Any) -> None:
 
 
 def _split_path(path: str) -> List[str]:
-    """Split a dot-separated path, stripping leading $ and [] array markers."""
+    """Split persisted slash or dot paths, stripping root and array markers."""
     cleaned = path.lstrip("$.")
-    parts = [p.replace("[]", "") for p in cleaned.split(".")]
+    parts = [part.replace("[]", "") for part in re.split(r"[/.]", cleaned)]
     return [p for p in parts if p]
 
 def _make_caster(src_type: Optional[str], tgt_type: Optional[str]) -> Callable:
@@ -303,7 +304,6 @@ def _setter(path: str, value_expr: str) -> str:
     return "\n".join(lines)
 
 def _safe_name(name: str) -> str:
-    import re
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
 
 class TransformError(Exception):
