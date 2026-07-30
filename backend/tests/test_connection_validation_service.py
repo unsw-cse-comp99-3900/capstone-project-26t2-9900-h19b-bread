@@ -160,6 +160,12 @@ def test_service_loads_fixed_context_and_persists_decision():
     assert response.lifecycle_status == "ACTIVE"
     assert response.reason_code == "DIRECTLY_COMPATIBLE"
     assert response.activation_allowed is True
+    assert response.business_rules_diagnostics == {
+        "source_business_rules": [],
+        "target_business_rules": [],
+        "overlapping_rules": [],
+        "disjoint_rules": [],
+    }
     assert repository.saved[0] == 77
     assert repository.prepared == [(100, 200)]
 

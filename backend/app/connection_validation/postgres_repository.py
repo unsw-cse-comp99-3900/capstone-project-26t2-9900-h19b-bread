@@ -46,7 +46,7 @@ class PostgresConnectionValidationRepository:
                 cursor.execute(
                     """
                     SELECT api_id, version_id, status, input_formats, output_formats,
-                           input_format, output_format
+                           input_format, output_format, business_rules
                     FROM api_version
                     WHERE api_id = %s AND version_id = %s
                     """,
@@ -63,6 +63,7 @@ class PostgresConnectionValidationRepository:
             status=row["status"],
             input_formats=input_formats,
             output_formats=output_formats,
+            business_rules=_format_list(row.get("business_rules")),
         )
 
     def get_schema(
@@ -400,6 +401,7 @@ class PostgresConnectionValidationRepository:
             "reason_code": decision.reason_code,
             "reason": decision.reason,
             "activation_allowed": decision.activation_allowed,
+            "business_rules_diagnostics": decision.business_rules_diagnostics,
             "stages": [stage.model_dump(mode="json") for stage in decision.stages],
             "reasons": [reason.model_dump(mode="json") for reason in decision.reasons],
         }

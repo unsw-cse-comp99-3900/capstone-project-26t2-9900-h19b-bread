@@ -54,6 +54,7 @@ class ConnectionValidationResponse(BaseModel):
     reason_code: str
     reason: str
     activation_allowed: bool
+    business_rules_diagnostics: dict[str, Any]
     source_api_id: int
     source_version_id: int
     target_api_id: int
@@ -110,6 +111,7 @@ class EndpointVersion:
     status: str
     input_formats: list[str]
     output_formats: list[str]
+    business_rules: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -155,6 +157,7 @@ class ConnectionValidationDecision:
     reason: str
     activation_allowed: bool
     stages: list[StageResult]
+    business_rules_diagnostics: dict[str, Any]
     reasons: list[ReasonItem] = field(default_factory=list)
     transformed_data: dict[str, Any] | None = None
     transform_execution: TransformExecution | None = None

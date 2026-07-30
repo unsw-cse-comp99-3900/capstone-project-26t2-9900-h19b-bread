@@ -27,6 +27,12 @@ class FakeService:
             reason_code="DIRECTLY_COMPATIBLE",
             reason="Compatible.",
             activation_allowed=True,
+            business_rules_diagnostics={
+                "source_business_rules": [],
+                "target_business_rules": [],
+                "overlapping_rules": [],
+                "disjoint_rules": [],
+            },
             source_api_id=request.source_api_id,
             source_version_id=request.source_version_id,
             target_api_id=request.target_api_id,

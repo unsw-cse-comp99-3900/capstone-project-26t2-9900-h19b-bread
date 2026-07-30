@@ -144,6 +144,88 @@ def test_same_version_is_rejected_during_eligibility():
     assert decision.stages[0].status == ConnectionValidationStageStatus.FAILED
 
 
+def test_business_rules_diagnostics_are_non_blocking_for_success_paths():
+    cases = [
+        (
+            ["RULE_B", "RULE_A", "RULE_A"],
+            ["RULE_C", "RULE_B"],
+            {
+                "source_business_rules": ["RULE_A", "RULE_B"],
+                "target_business_rules": ["RULE_B", "RULE_C"],
+                "overlapping_rules": ["RULE_B"],
+                "disjoint_rules": ["RULE_A", "RULE_C"],
+            },
+        ),
+        (
+            ["RULE_A"],
+            ["RULE_B"],
+            {
+                "source_business_rules": ["RULE_A"],
+                "target_business_rules": ["RULE_B"],
+                "overlapping_rules": [],
+                "disjoint_rules": ["RULE_A", "RULE_B"],
+            },
+        ),
+        (
+            [],
+            ["RULE_B", " "],
+            {
+                "source_business_rules": [],
+                "target_business_rules": ["RULE_B"],
+                "overlapping_rules": [],
+                "disjoint_rules": ["RULE_B"],
+            },
+        ),
+    ]
+
+    for source_rules, target_rules, expected in cases:
+        context = _context(
+            source=EndpointVersion(
+                1, 10, "PUBLISHED", [], ["JSON"], source_rules
+            ),
+            target=EndpointVersion(
+                2, 20, "PUBLISHED", ["JSON"], [], target_rules
+            ),
+        )
+
+        decision = _pipeline().run(context)
+
+        assert decision.compatibility_level == CompatibilityLevel.DIRECTLY_COMPATIBLE
+        assert decision.activation_allowed is True
+        assert decision.business_rules_diagnostics == expected
+
+
+def test_business_rules_diagnostics_are_present_on_halted_results():
+    context = _context(
+        source=EndpointVersion(
+            1, 10, "PUBLISHED", [], ["Validation Report"], ["SOURCE_RULE"]
+        ),
+        target=EndpointVersion(
+            2, 20, "PUBLISHED", ["JSON"], [], ["TARGET_RULE"]
+        ),
+        aliases=[
+            FormatAlias("JSON", "JSON", "JSON"),
+            FormatAlias(
+                "Validation Report",
+                "VALIDATION_REPORT",
+                "REPORT",
+                is_terminal_output=True,
+            ),
+        ],
+    )
+
+    decision = _pipeline().run(context)
+
+    assert decision.compatibility_level == CompatibilityLevel.INCOMPATIBLE
+    assert decision.activation_allowed is False
+    assert decision.business_rules_diagnostics == {
+        "source_business_rules": ["SOURCE_RULE"],
+        "target_business_rules": ["TARGET_RULE"],
+        "overlapping_rules": [],
+        "disjoint_rules": ["SOURCE_RULE", "TARGET_RULE"],
+    }
+
+
 def test_multi_format_pair_ignores_unknown_format_when_known_path_exists():
     context = _context(
         source=EndpointVersion(1, 10, "PUBLISHED", [], ["Custom", "JSON"]),

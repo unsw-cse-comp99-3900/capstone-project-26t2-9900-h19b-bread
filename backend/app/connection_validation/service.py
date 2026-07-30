@@ -165,6 +165,7 @@ class ConnectionValidationService:
                 and persisted.is_latest_run
                 and persisted.lifecycle_status == "ACTIVE"
             ),
+            business_rules_diagnostics=decision.business_rules_diagnostics,
             source_api_id=request.source_api_id,
             source_version_id=request.source_version_id,
             target_api_id=request.target_api_id,

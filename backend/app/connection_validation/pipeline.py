@@ -147,6 +147,7 @@ class ConnectionValidationPipeline:
             reason=reason,
             activation_allowed=True,
             stages=stages,
+            business_rules_diagnostics=self._business_rules_diagnostics(context),
             reasons=reasons,
             transformed_data=transformed_data,
             transform_execution=transform_execution,
@@ -571,10 +572,29 @@ class ConnectionValidationPipeline:
             reason=blocker.message,
             activation_allowed=False,
             stages=stages,
+            business_rules_diagnostics=self._business_rules_diagnostics(context),
             reasons=reasons,
             transformed_data=transformed_data,
             transform_execution=transform_execution,
         )
+
+    @staticmethod
+    def _business_rules_diagnostics(
+        context: ConnectionValidationContext,
+    ) -> dict[str, Any]:
+        # Diagnostic only: business rules never affect compatibility or activation.
+        source_rules = {
+            rule.strip() for rule in context.source.business_rules if rule.strip()
+        }
+        target_rules = {
+            rule.strip() for rule in context.target.business_rules if rule.strip()
+        }
+        return {
+            "source_business_rules": sorted(source_rules),
+            "target_business_rules": sorted(target_rules),
+            "overlapping_rules": sorted(source_rules & target_rules),
+            "disjoint_rules": sorted(source_rules ^ target_rules),
+        }
 
     @staticmethod
     def _resolve_aliases(
