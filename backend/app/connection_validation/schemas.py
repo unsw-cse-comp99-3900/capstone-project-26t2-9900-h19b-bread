@@ -19,6 +19,8 @@ class ConnectionValidationRequest(BaseModel):
     source_version_id: int = Field(..., gt=0)
     target_api_id: int = Field(..., gt=0)
     target_version_id: int = Field(..., gt=0)
+    source_schema_id: int | None = Field(default=None, gt=0)
+    target_schema_id: int | None = Field(default=None, gt=0)
     sample_data: dict[str, Any] | None = None
     trigger_type: ConnectionValidationTrigger = ConnectionValidationTrigger.MANUAL
 

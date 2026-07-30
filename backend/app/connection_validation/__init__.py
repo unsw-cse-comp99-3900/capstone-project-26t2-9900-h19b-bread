@@ -5,6 +5,15 @@ from app.connection_validation.enums import (
     ConnectionValidationTrigger,
 )
 from app.connection_validation.pipeline import ConnectionValidationPipeline
+from app.connection_validation.postgres_repository import (
+    PostgresConnectionValidationRepository,
+)
+from app.connection_validation.repository import (
+    ConnectionValidationConflictError,
+    ConnectionValidationNotFoundError,
+    ConnectionValidationPermissionError,
+    ConnectionValidationRepository,
+)
 from app.connection_validation.schemas import (
     ConnectionValidationContext,
     ConnectionValidationDecision,
@@ -21,6 +30,10 @@ __all__ = [
     "ConnectionValidationContext",
     "ConnectionValidationDecision",
     "ConnectionValidationPipeline",
+    "ConnectionValidationConflictError",
+    "ConnectionValidationNotFoundError",
+    "ConnectionValidationPermissionError",
+    "ConnectionValidationRepository",
     "ConnectionValidationRequest",
     "ConnectionValidationResponse",
     "ConnectionValidationStage",
@@ -30,4 +43,5 @@ __all__ = [
     "FormatAlias",
     "MappingContext",
     "PayloadSchema",
+    "PostgresConnectionValidationRepository",
 ]
