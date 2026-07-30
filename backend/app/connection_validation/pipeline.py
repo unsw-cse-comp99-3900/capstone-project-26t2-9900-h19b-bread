@@ -138,7 +138,11 @@ class ConnectionValidationPipeline:
             )
         )
         return ConnectionValidationDecision(
-            compatibility_level=CompatibilityLevel.COMPATIBLE,
+            compatibility_level=(
+                CompatibilityLevel.COMPATIBLE_WITH_MAPPING
+                if mapping_required
+                else CompatibilityLevel.DIRECTLY_COMPATIBLE
+            ),
             reason_code=reason_code,
             reason=reason,
             activation_allowed=True,
@@ -557,7 +561,7 @@ class ConnectionValidationPipeline:
             )
         )
         level = (
-            CompatibilityLevel.MISSING_INFORMATION
+            CompatibilityLevel.NOT_ASSESSABLE
             if blocker.status == ConnectionValidationStageStatus.MISSING_INFORMATION
             else CompatibilityLevel.INCOMPATIBLE
         )

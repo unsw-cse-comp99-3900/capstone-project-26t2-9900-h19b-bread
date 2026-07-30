@@ -23,7 +23,7 @@ class FakeService:
         return ConnectionValidationResponse(
             connection_validation_run_id=77,
             compatibility_result_id=88,
-            compatibility_level=CompatibilityLevel.COMPATIBLE,
+            compatibility_level=CompatibilityLevel.DIRECTLY_COMPATIBLE,
             reason_code="DIRECTLY_COMPATIBLE",
             reason="Compatible.",
             activation_allowed=True,

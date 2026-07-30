@@ -7,7 +7,6 @@ from typing import Any
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
-from app.connection_validation.enums import CompatibilityLevel
 from app.connection_validation.repository import (
     ConnectionValidationConflictError,
     ConnectionValidationPermissionError,
@@ -568,7 +567,7 @@ class PostgresConnectionValidationRepository:
                 )
                 run_status = (
                     "PASSED"
-                    if decision.compatibility_level == CompatibilityLevel.COMPATIBLE
+                    if decision.activation_allowed
                     else "FAILED"
                 )
                 cursor.execute(

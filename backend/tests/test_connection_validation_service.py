@@ -259,7 +259,7 @@ def test_service_reports_deprecated_connection_when_run_was_cancelled():
 
     response = service.validate(_request(), actor_id=5, enterprise_id=9)
 
-    assert response.compatibility_level.value == "MISSING_INFORMATION"
+    assert response.compatibility_level.value == "NOT_ASSESSABLE"
     assert response.reason_code == "CONNECTION_DEPRECATED"
     assert response.activation_allowed is False
 

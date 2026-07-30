@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from app.connection_validation.enums import CompatibilityLevel
 from app.connection_validation.pipeline import ConnectionValidationPipeline
 from app.connection_validation.repository import (
     ConnectionValidationConflictError,
@@ -143,7 +144,7 @@ class ConnectionValidationService:
             compatibility_level=(
                 decision.compatibility_level
                 if persisted.is_latest_run and persisted.lifecycle_status != "DEPRECATED"
-                else "MISSING_INFORMATION"
+                else CompatibilityLevel.NOT_ASSESSABLE
             ),
             reason_code=(
                 "CONNECTION_DEPRECATED"

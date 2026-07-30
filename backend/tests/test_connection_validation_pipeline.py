@@ -55,7 +55,7 @@ def _pipeline():
 def test_directly_compatible_pair_passes_all_required_gates():
     decision = _pipeline().run(_context())
 
-    assert decision.compatibility_level == CompatibilityLevel.COMPATIBLE
+    assert decision.compatibility_level == CompatibilityLevel.DIRECTLY_COMPATIBLE
     assert decision.reason_code == "DIRECTLY_COMPATIBLE"
     assert decision.activation_allowed is True
     assert [stage.status for stage in decision.stages] == [
@@ -113,7 +113,7 @@ def test_multi_format_pair_uses_non_terminal_compatible_output():
 
     decision = _pipeline().run(context)
 
-    assert decision.compatibility_level == CompatibilityLevel.COMPATIBLE
+    assert decision.compatibility_level == CompatibilityLevel.DIRECTLY_COMPATIBLE
     assert decision.reason_code == "DIRECTLY_COMPATIBLE"
     assert decision.stages[1].payload["ignored_terminal_source_formats"] == [
         "Validation Report"
@@ -151,7 +151,7 @@ def test_multi_format_pair_ignores_unknown_format_when_known_path_exists():
 
     decision = _pipeline().run(context)
 
-    assert decision.compatibility_level == CompatibilityLevel.COMPATIBLE
+    assert decision.compatibility_level == CompatibilityLevel.DIRECTLY_COMPATIBLE
     assert decision.reason_code == "DIRECTLY_COMPATIBLE"
     assert decision.stages[1].payload["unknown_source_formats"] == ["Custom"]
 
@@ -163,7 +163,7 @@ def test_unknown_format_blocks_when_no_known_path_exists():
 
     decision = _pipeline().run(context)
 
-    assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
+    assert decision.compatibility_level == CompatibilityLevel.NOT_ASSESSABLE
     assert decision.reason_code == "FORMAT_ALIAS_MISSING"
 
 
@@ -174,7 +174,7 @@ def test_empty_source_output_formats_stops_pipeline_as_missing_information():
 
     decision = _pipeline().run(context)
 
-    assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
+    assert decision.compatibility_level == CompatibilityLevel.NOT_ASSESSABLE
     assert decision.reason_code == "SOURCE_OUTPUT_FORMAT_MISSING"
     assert decision.activation_allowed is False
     assert decision.stages[1].status == ConnectionValidationStageStatus.MISSING_INFORMATION
@@ -187,7 +187,7 @@ def test_empty_source_output_formats_stops_pipeline_as_missing_information():
 def test_missing_schema_is_missing_information_not_incompatible():
     decision = _pipeline().run(_context(source_schema=None))
 
-    assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
+    assert decision.compatibility_level == CompatibilityLevel.NOT_ASSESSABLE
     assert decision.reason_code == "SOURCE_OUTPUT_SCHEMA_MISSING"
     assert decision.stages[0].status == ConnectionValidationStageStatus.MISSING_INFORMATION
 
@@ -197,7 +197,7 @@ def test_mapping_compatible_schema_requires_complete_mapping():
 
     decision = _pipeline().run(_context(target_schema=target))
 
-    assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
+    assert decision.compatibility_level == CompatibilityLevel.NOT_ASSESSABLE
     assert decision.reason_code == "MAPPING_REQUIRED"
     assert decision.activation_allowed is False
     schema_issues = decision.stages[2].payload["issues"]
@@ -221,7 +221,7 @@ def test_required_target_field_optional_in_source_requires_mapping():
 
     decision = _pipeline().run(_context(source_schema=source, target_schema=target))
 
-    assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
+    assert decision.compatibility_level == CompatibilityLevel.NOT_ASSESSABLE
     assert decision.reason_code == "MAPPING_REQUIRED"
     issues = decision.stages[2].payload["issues"]
     assert [issue["reason_code"] for issue in issues] == [
@@ -242,7 +242,7 @@ def test_complete_mapping_must_also_pass_target_validation():
 
     decision = _pipeline().run(_context(target_schema=target, mapping=mapping))
 
-    assert decision.compatibility_level == CompatibilityLevel.COMPATIBLE
+    assert decision.compatibility_level == CompatibilityLevel.COMPATIBLE_WITH_MAPPING
     assert decision.reason_code == "COMPATIBLE_WITH_MAPPING"
     assert decision.activation_allowed is True
     assert decision.transformed_data == {"invoice_id": "INV-1"}
@@ -401,7 +401,7 @@ def test_blocking_schema_conflict_with_partial_mapping_remains_incompatible():
 def test_missing_sample_blocks_activation_after_static_checks():
     decision = _pipeline().run(_context(sample_data=None))
 
-    assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
+    assert decision.compatibility_level == CompatibilityLevel.NOT_ASSESSABLE
     assert decision.reason_code == "SAMPLE_DATA_MISSING"
     assert decision.stages[-1].status == ConnectionValidationStageStatus.NOT_RUN
 
@@ -440,7 +440,7 @@ def test_supported_format_bridge_still_requires_mapping_transform():
 
     decision = _pipeline().run(context)
 
-    assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
+    assert decision.compatibility_level == CompatibilityLevel.NOT_ASSESSABLE
     assert decision.reason_code == "MAPPING_REQUIRED"
 
 
@@ -465,7 +465,7 @@ def test_supported_bridge_uses_machine_readable_option_from_mixed_formats():
 
     decision = _pipeline().run(context)
 
-    assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
+    assert decision.compatibility_level == CompatibilityLevel.NOT_ASSESSABLE
     assert decision.reason_code == "MAPPING_REQUIRED"
     assert decision.stages[1].payload["requires_format_transform"] is True
 
@@ -496,7 +496,7 @@ def test_selected_schema_formats_require_transform_despite_version_format_overla
 
     decision = _pipeline().run(context)
 
-    assert decision.compatibility_level == CompatibilityLevel.MISSING_INFORMATION
+    assert decision.compatibility_level == CompatibilityLevel.NOT_ASSESSABLE
     assert decision.reason_code == "MAPPING_REQUIRED"
     assert decision.stages[1].payload["requires_format_transform"] is True
     assert decision.stages[1].payload["source_schema_format"] == "XML"

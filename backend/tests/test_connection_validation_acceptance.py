@@ -80,7 +80,7 @@ def test_ess_aggregation_json_to_xml_passes_mapping_and_target_acceptance():
     assert {issue["code"] for issue in comparison["issues"]} == {
         "type_conversion_required"
     }
-    assert decision.compatibility_level == CompatibilityLevel.COMPATIBLE
+    assert decision.compatibility_level == CompatibilityLevel.COMPATIBLE_WITH_MAPPING
     assert decision.reason_code == "COMPATIBLE_WITH_MAPPING"
     assert decision.activation_allowed is True
     assert decision.transform_execution is not None

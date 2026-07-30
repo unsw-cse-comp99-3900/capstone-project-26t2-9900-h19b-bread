@@ -15,7 +15,7 @@
 --
 -- Layer C (connection check) uses api_version metadata only:
 --   input_format / output_format / capability_category
---   Result states: COMPATIBLE | INCOMPATIBLE | MISSING_INFORMATION (+ reason)
+--   Result states: DIRECTLY_COMPATIBLE | COMPATIBLE_WITH_MAPPING | INCOMPATIBLE | NOT_ASSESSABLE
 --   Not field mapping; not deep payload processing; not single-API publish validation.
 --   Layer E remains optional and only weakly linked via compatibility_result_id.
 --
@@ -123,7 +123,7 @@ CREATE TYPE schema_direction_type AS ENUM ('INPUT', 'OUTPUT');
 CREATE TYPE schema_payload_format AS ENUM ('JSON', 'XML');
 -- API-to-API connection check (A.output → B.input); not field-level mapping
 CREATE TYPE compatibility_level_type AS ENUM (
-    'COMPATIBLE', 'INCOMPATIBLE', 'MISSING_INFORMATION'
+    'DIRECTLY_COMPATIBLE', 'COMPATIBLE_WITH_MAPPING', 'INCOMPATIBLE', 'NOT_ASSESSABLE'
 );
 CREATE TYPE compatibility_reason_severity AS ENUM (
     'INFO', 'WARNING', 'ERROR'
@@ -175,7 +175,7 @@ COMMENT ON TYPE version_event_type IS 'Custom DataType: version timeline event';
 COMMENT ON TYPE api_category_type IS 'Custom DataType from capstone: transformation/validation/communication';
 COMMENT ON TYPE schema_direction_type IS 'Custom DataType from capstone schemas.direction';
 COMMENT ON TYPE schema_payload_format IS 'Custom DataType from capstone schemas.format';
-COMMENT ON TYPE compatibility_level_type IS 'API connection check: COMPATIBLE / INCOMPATIBLE / MISSING_INFORMATION';
+COMMENT ON TYPE compatibility_level_type IS 'API connection check: direct, mapping-assisted, incompatible, or not assessable';
 COMMENT ON TYPE mapping_lifecycle_status IS 'Custom DataType: mapping package lifecycle';
 COMMENT ON TYPE compatibility_reason_severity IS 'Custom DataType: severity of a structured connection-validation reason';
 COMMENT ON TYPE connection_validation_run_status IS 'Custom DataType: overall state of an API-to-API connection validation run';
