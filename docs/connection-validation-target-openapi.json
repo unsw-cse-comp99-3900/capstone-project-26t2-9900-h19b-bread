@@ -1,0 +1,106 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Connection Validation Target API",
+    "version": "1.0.0",
+    "description": "Test fixture whose invoice request directly accepts the Connection Validation Source API response."
+  },
+  "servers": [
+    {
+      "url": "https://connection-target.example.com/v1"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Transmission",
+      "description": "Invoice delivery endpoints."
+    }
+  ],
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/invoices": {
+      "post": {
+        "tags": [
+          "Transmission"
+        ],
+        "summary": "Accept an invoice from the source API",
+        "operationId": "acceptInvoice",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoicePayload"
+              },
+              "example": {
+                "invoiceId": "INV-2026-0001",
+                "supplierTaxId": "AU123456789",
+                "buyerTaxId": "AU987654321",
+                "issueDate": "2026-07-31",
+                "currency": "AUD",
+                "amount": 120.5
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Invoice accepted"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    },
+    "schemas": {
+      "InvoicePayload": {
+        "type": "object",
+        "required": [
+          "invoiceId",
+          "supplierTaxId",
+          "buyerTaxId",
+          "issueDate",
+          "currency",
+          "amount"
+        ],
+        "properties": {
+          "invoiceId": {
+            "type": "string"
+          },
+          "supplierTaxId": {
+            "type": "string"
+          },
+          "buyerTaxId": {
+            "type": "string"
+          },
+          "issueDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "currency": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "amount": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

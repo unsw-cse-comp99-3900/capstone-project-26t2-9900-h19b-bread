@@ -34,9 +34,14 @@ class ConnectionValidationPipeline:
         self,
         compare_schemas: SchemaComparator,
         validate_target: TargetValidator,
+        *,
+        allow_mapping: bool = True,
+        require_sample: bool = True,
     ) -> None:
         self.compare_schemas = compare_schemas
         self.validate_target = validate_target
+        self.allow_mapping = allow_mapping
+        self.require_sample = require_sample
 
     def run(self, context: ConnectionValidationContext) -> ConnectionValidationDecision:
         stages: list[StageResult] = []
@@ -59,6 +64,7 @@ class ConnectionValidationPipeline:
         schema_result, schema_reasons, schema_mapping_required = self._schema_check(comparison)
         if (
             schema_result.status != ConnectionValidationStageStatus.PASSED
+            and self.allow_mapping
             and context.mapping is not None
             and context.mapping.completeness == "FULL"
         ):
@@ -101,20 +107,24 @@ class ConnectionValidationPipeline:
             or format_result.payload.get("requires_format_transform")
         )
 
-        mapping_result = self._mapping_check(context, mapping_required)
-        stages.append(mapping_result)
-        if mapping_result.status not in {
-            ConnectionValidationStageStatus.PASSED,
-            ConnectionValidationStageStatus.NOT_RUN,
-        }:
-            return self._halt(context, stages, reasons, mapping_result)
+        if self.allow_mapping:
+            mapping_result = self._mapping_check(context, mapping_required)
+            stages.append(mapping_result)
+            if mapping_result.status not in {
+                ConnectionValidationStageStatus.PASSED,
+                ConnectionValidationStageStatus.NOT_RUN,
+            }:
+                return self._halt(context, stages, reasons, mapping_result)
 
         target_result, transformed_data, transform_execution = self._target_validation(
             context,
             mapping_required,
         )
         stages.append(target_result)
-        if target_result.status != ConnectionValidationStageStatus.PASSED:
+        if target_result.status not in {
+            ConnectionValidationStageStatus.PASSED,
+            ConnectionValidationStageStatus.NOT_RUN,
+        }:
             return self._halt(
                 context,
                 stages,
@@ -247,6 +257,17 @@ class ConnectionValidationPipeline:
             requires_schema_format_transform = (
                 source_schema_format != target_schema_format
             )
+            if requires_schema_format_transform and not self.allow_mapping:
+                return self._stage_failure(
+                    ConnectionValidationStage.FORMAT_CHECK,
+                    "FORMAT_TRANSFORM_REQUIRED",
+                    "Source output requires a format transform before the target can accept it.",
+                    {
+                        "source_schema_format": source_schema_format,
+                        "target_schema_format": target_schema_format,
+                        **diagnostics,
+                    },
+                )
             return StageResult(
                 stage=ConnectionValidationStage.FORMAT_CHECK,
                 status=ConnectionValidationStageStatus.PASSED,
@@ -276,6 +297,17 @@ class ConnectionValidationPipeline:
             and has_machine_readable_path
             and {source_schema_format, target_schema_format} <= SUPPORTED_SCHEMA_FORMATS
         ):
+            if not self.allow_mapping:
+                return self._stage_failure(
+                    ConnectionValidationStage.FORMAT_CHECK,
+                    "FORMAT_MISMATCH",
+                    "Source output format is not directly accepted by the target input.",
+                    {
+                        "source_formats": sorted(source_tokens),
+                        "target_formats": sorted(target_tokens),
+                        **diagnostics,
+                    },
+                )
             return StageResult(
                 stage=ConnectionValidationStage.FORMAT_CHECK,
                 status=ConnectionValidationStageStatus.PASSED,
@@ -330,6 +362,17 @@ class ConnectionValidationPipeline:
                 False,
             )
         if compatibility == "compatible_with_mapping":
+            if not self.allow_mapping:
+                return (
+                    self._stage_failure(
+                        ConnectionValidationStage.SCHEMA_CHECK,
+                        "SCHEMA_NOT_DIRECTLY_COMPATIBLE",
+                        "Source output does not directly satisfy the target input schema.",
+                        payload,
+                    ),
+                    reasons,
+                    False,
+                )
             return (
                 StageResult(
                     stage=ConnectionValidationStage.SCHEMA_CHECK,
@@ -398,6 +441,16 @@ class ConnectionValidationPipeline:
         mapping_required: bool,
     ) -> tuple[StageResult, dict[str, Any] | None, TransformExecution | None]:
         if context.sample_data is None:
+            if not self.require_sample:
+                return (
+                    StageResult(
+                        stage=ConnectionValidationStage.TARGET_VALIDATION,
+                        status=ConnectionValidationStageStatus.NOT_RUN,
+                        message="No sample payload was supplied; static compatibility checks were used.",
+                    ),
+                    None,
+                    None,
+                )
             return (
                 self._stage_missing(
                     ConnectionValidationStage.TARGET_VALIDATION,
@@ -534,7 +587,12 @@ class ConnectionValidationPipeline:
         transform_execution: TransformExecution | None = None,
     ) -> ConnectionValidationDecision:
         completed = {result.stage for result in stages}
-        for stage in STAGE_ORDER:
+        stage_order = [
+            stage
+            for stage in STAGE_ORDER
+            if self.allow_mapping or stage != ConnectionValidationStage.MAPPING_CHECK
+        ]
+        for stage in stage_order:
             if stage not in completed:
                 stages.append(
                     StageResult(
