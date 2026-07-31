@@ -1,9 +1,10 @@
+import re
 from typing import Any
 
 from app.services.schema_mapping.compatibility_engine import compare_schemas
 from app.services.schema_mapping.data_validator import validate_data
 from app.services.schema_mapping.json_schema_extractor import infer_schema
-from app.services.schema_mapping.mapping_engine import build_mapping
+from app.services.schema_mapping.mapping_engine import FieldMapping, build_mapping
 from app.services.schema_mapping.repository import PostgresSchemaMappingRepository
 from app.services.schema_mapping.schema_transformer import (
     build_transformer,
@@ -15,6 +16,10 @@ from app.services.schema_mapping.xml_schema_extractor import extract_schema_from
 
 class SchemaMappingError(ValueError):
     """Raised when a stateless schema mapping request cannot be completed."""
+
+
+class SchemaMappingPermissionError(SchemaMappingError):
+    """Raised when an actor cannot manage the source side of a mapping."""
 
 
 repository = PostgresSchemaMappingRepository()
@@ -94,10 +99,22 @@ def transform_preview(
     mapping = build_mapping(comparison)
     transformer = build_transformer(mapping)
     transformed_json = transformer(data)
+    target_valid, target_error = validate_data(
+        transformed_json,
+        comparison["normalized_target"],
+    )
+    if not target_valid:
+        raise SchemaMappingError(
+            target_error or "Transformed output failed target input validation."
+        )
 
     return {
         "result": (
-            transform_to_xml(lambda _: transformed_json, {}, root_tag="record")
+            transform_to_xml(
+                lambda _: transformed_json,
+                {},
+                root_tag=_target_xml_root(target_schema),
+            )
             if output_format == "xml"
             else transformed_json
         ),
@@ -129,6 +146,8 @@ def compare_database_api_schemas(
     target_schema_id: int,
     *,
     save_mapping: bool = True,
+    enterprise_id: int | None = None,
+    is_admin: bool = False,
 ) -> dict[str, Any]:
     source_schema = repository.get_api_schema(source_schema_id)
     target_schema = repository.get_api_schema(target_schema_id)
@@ -143,8 +162,13 @@ def compare_database_api_schemas(
         or target_schema.get("version_status") != "PUBLISHED"
     ):
         raise SchemaMappingError("Schema mapping is only available for published APIs.")
-    if source_schema["api_id"] == target_schema["api_id"]:
-        raise SchemaMappingError("Source and target schemas must belong to different APIs.")
+    if source_schema["version_id"] == target_schema["version_id"]:
+        raise SchemaMappingError("Source and target schemas must belong to different versions.")
+    if source_schema["direction"] != "OUTPUT":
+        raise SchemaMappingError("Source schema must have OUTPUT direction.")
+    if target_schema["direction"] != "INPUT":
+        raise SchemaMappingError("Target schema must have INPUT direction.")
+    _ensure_source_owner(source_schema["api_id"], enterprise_id, is_admin)
 
     comparison = compare_schema_pair(
         source_schema=source_schema["schema_definition"],
@@ -157,11 +181,6 @@ def compare_database_api_schemas(
     comparison_result_id = None
     mapping_id = None
     if save_mapping:
-        comparison_result_id = repository.save_comparison(
-            source_schema=source_schema,
-            target_schema=target_schema,
-            comparison=comparison,
-        )
         mapping_id = repository.save_mapping(
             source_schema=source_schema,
             target_schema=target_schema,
@@ -185,6 +204,8 @@ def transform_database_mapping_preview(
     output_format: str = "json",
     *,
     save_run: bool = True,
+    enterprise_id: int | None = None,
+    is_admin: bool = False,
 ) -> dict[str, Any]:
     output_format = output_format.lower()
     if output_format not in {"json", "xml"}:
@@ -193,6 +214,11 @@ def transform_database_mapping_preview(
     mapping_detail = repository.get_mapping(mapping_id)
     if mapping_detail is None:
         raise SchemaMappingError(f"Mapping {mapping_id} was not found.")
+    _ensure_source_owner(
+        mapping_detail["row"]["source_api_id"],
+        enterprise_id,
+        is_admin,
+    )
     source_schema = mapping_detail["source_schema"]
     if source_schema is None:
         raise SchemaMappingError("Mapping has no source schema.")
@@ -204,8 +230,22 @@ def transform_database_mapping_preview(
     mapping = mapping_detail["mapping"]
     transformer = build_transformer(mapping)
     transformed_json = transformer(data)
+    target_schema = mapping_detail["target_schema"]
+    if target_schema is None:
+        raise SchemaMappingError("Mapping has no target schema.")
+    target_valid, target_error = validate_data(
+        transformed_json,
+        target_schema["schema_definition"],
+    )
     result = (
-        transform_to_xml(lambda _: transformed_json, {}, root_tag="record")
+        transform_to_xml(
+            lambda _: transformed_json,
+            {},
+            root_tag=_target_xml_root(
+                target_schema["schema_definition"],
+                target_schema.get("source_path"),
+            ),
+        )
         if output_format == "xml"
         else transformed_json
     )
@@ -217,6 +257,13 @@ def transform_database_mapping_preview(
             output_data=result,
             output_format=output_format,
             mapping_status=mapping.status,
+            success=target_valid,
+            error_message=target_error,
+        )
+
+    if not target_valid:
+        raise SchemaMappingError(
+            target_error or "Transformed output failed target input validation."
         )
 
     return {
@@ -229,4 +276,104 @@ def transform_database_mapping_preview(
         "transform_run_id": transform_run_id,
         "comparison_result_id": mapping_detail["row"]["compatibility_result_id"],
         "mapping_id": mapping_id,
+        "target_validation_passed": True,
     }
+
+
+def update_database_mapping_rules(
+    mapping_id: int,
+    rules: list[dict[str, Any]],
+    *,
+    enterprise_id: int | None = None,
+    is_admin: bool = False,
+) -> dict[str, Any]:
+    mapping_detail = repository.get_mapping(mapping_id)
+    if mapping_detail is None:
+        raise SchemaMappingError(f"Mapping {mapping_id} was not found.")
+    row = mapping_detail["row"]
+    _ensure_source_owner(row["source_api_id"], enterprise_id, is_admin)
+    if row["lifecycle_status"] in {"VALIDATING", "DEPRECATED"}:
+        raise SchemaMappingError(
+            f"Mapping rules cannot be edited while lifecycle status is {row['lifecycle_status']}."
+        )
+
+    target_schema = mapping_detail["target_schema"]
+    required_paths = _required_leaf_paths(target_schema["schema_definition"])
+    declared_targets = [_canonical_path(rule["target_path"]) for rule in rules]
+    if len(declared_targets) != len(set(declared_targets)):
+        raise SchemaMappingError("Each target path may appear in at most one mapping rule.")
+    target_paths = {
+        _canonical_path(rule["target_path"])
+        for rule in rules
+        if rule["transform"] not in {"drop", "missing"}
+    }
+    completeness = "FULL" if required_paths <= target_paths else "PARTIAL"
+    fields = [
+        FieldMapping(
+            source_path=rule.get("source_path"),
+            target_path=rule["target_path"],
+            transform=rule["transform"],
+            source_type=rule.get("source_type"),
+            target_type=rule.get("target_type"),
+            confidence=rule.get("confidence", "high"),
+            note=rule.get("note", ""),
+        )
+        for rule in rules
+    ]
+    updated = repository.replace_mapping_rules(mapping_id, fields, completeness)
+    return {
+        **updated,
+        "revalidation_required": True,
+        "missing_required_targets": sorted(required_paths - target_paths),
+    }
+
+
+def _ensure_source_owner(
+    source_api_id: int,
+    enterprise_id: int | None,
+    is_admin: bool,
+) -> None:
+    if enterprise_id is None or is_admin:
+        return
+    if repository.get_api_owner_enterprise(source_api_id) != enterprise_id:
+        raise SchemaMappingPermissionError(
+            "Only the source API owner or an administrator may manage this mapping."
+        )
+
+
+def _required_leaf_paths(schema: dict[str, Any], prefix: str = "") -> set[str]:
+    if schema.get("type") == "array":
+        item_path = f"{prefix}[]" if prefix else "[]"
+        nested = _required_leaf_paths(schema.get("items") or {}, item_path)
+        return nested or {item_path}
+    if schema.get("type") != "object":
+        return {prefix} if prefix else set()
+    paths: set[str] = set()
+    properties = schema.get("properties") or {}
+    for name in schema.get("required") or []:
+        child = properties.get(name, {})
+        path = f"{prefix}.{name}" if prefix else name
+        nested = _required_leaf_paths(child, path)
+        paths.update(nested or {path})
+    return paths
+
+
+def _canonical_path(path: str) -> str:
+    cleaned = path.strip().lstrip("$./")
+    return ".".join(part for part in re.split(r"[/.]+", cleaned) if part)
+
+
+def _target_xml_root(
+    schema: dict[str, Any],
+    source_path: str | None = None,
+) -> str:
+    candidates = (schema.get("xml_root"), schema.get("root"), source_path)
+    return next(
+        (
+            candidate
+            for candidate in candidates
+            if isinstance(candidate, str)
+            and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", candidate)
+        ),
+        "record",
+    )

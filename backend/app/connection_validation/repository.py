@@ -9,11 +9,14 @@ from app.connection_validation.schemas import (
     EndpointVersion,
     FormatAlias,
     PayloadSchema,
+    PersistedDecision,
 )
 
 
 class ConnectionValidationNotFoundError(LookupError):
-    pass
+    def __init__(self, message: str, reason_code: str = "RESOURCE_NOT_FOUND") -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
 class ConnectionValidationConflictError(ValueError):
@@ -64,13 +67,41 @@ class ConnectionValidationRepository(Protocol):
     ) -> int:
         ...
 
+    def prepare_mapping(
+        self,
+        request: ConnectionValidationRequest,
+        source_schema: PayloadSchema,
+        target_schema: PayloadSchema,
+    ) -> dict:
+        ...
+
+    def get_connection(self, mapping_id: int) -> dict | None:
+        ...
+
+    def get_run(self, run_id: int) -> dict | None:
+        ...
+
+    def list_runs(
+        self,
+        source_api_id: int,
+        source_version_id: int,
+        target_api_id: int,
+        target_version_id: int,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[dict], int]:
+        ...
+
+    def deprecate_connection(self, mapping_id: int) -> dict | None:
+        ...
+
     def save_decision(
         self,
         run_id: int,
         request: ConnectionValidationRequest,
         context: ConnectionValidationContext,
         decision: ConnectionValidationDecision,
-    ) -> int:
+    ) -> PersistedDecision:
         ...
 
     def cancel_run(self, run_id: int) -> None:

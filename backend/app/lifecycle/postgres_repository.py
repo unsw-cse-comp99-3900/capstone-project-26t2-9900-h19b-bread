@@ -123,6 +123,28 @@ class PostgresLifecycleRepository:
                     (ApiStatus.WITHDRAWN.value, reason, actor_id, api_id),
                 )
 
+    def deprecate_api_connections(self, api_id: int) -> None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE connection_validation_run
+                    SET status = 'CANCELLED', completed_at = CURRENT_TIMESTAMP
+                    WHERE (source_api_id = %s OR target_api_id = %s)
+                      AND status = 'RUNNING'
+                    """,
+                    (api_id, api_id),
+                )
+                cursor.execute(
+                    """
+                    UPDATE schema_mapping
+                    SET lifecycle_status = 'DEPRECATED', updated_at = CURRENT_TIMESTAMP
+                    WHERE (source_api_id = %s OR target_api_id = %s)
+                      AND lifecycle_status <> 'DEPRECATED'
+                    """,
+                    (api_id, api_id),
+                )
+
     def get_current_version_id(self, api_id: int) -> int | None:
         with self._connection() as connection:
             with connection.cursor() as cursor:
@@ -215,6 +237,39 @@ class PostgresLifecycleRepository:
                     )
                     """,
                     (api_id, current_version_id),
+                )
+
+    def stale_superseded_connection_runs(
+        self,
+        api_id: int,
+        published_version_id: int,
+    ) -> None:
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE connection_validation_run
+                    SET status = 'STALE',
+                        completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
+                    WHERE status IN ('RUNNING', 'PASSED')
+                      AND (
+                          (source_api_id = %s AND source_version_id <> %s)
+                          OR (target_api_id = %s AND target_version_id <> %s)
+                      )
+                    """,
+                    (api_id, published_version_id, api_id, published_version_id),
+                )
+                cursor.execute(
+                    """
+                    UPDATE schema_mapping
+                    SET lifecycle_status = 'STALE', updated_at = CURRENT_TIMESTAMP
+                    WHERE lifecycle_status IN ('ACTIVE', 'VALIDATING')
+                      AND (
+                          (source_api_id = %s AND source_version_id <> %s)
+                          OR (target_api_id = %s AND target_version_id <> %s)
+                      )
+                    """,
+                    (api_id, published_version_id, api_id, published_version_id),
                 )
 
     def get_previous_published_version_id(

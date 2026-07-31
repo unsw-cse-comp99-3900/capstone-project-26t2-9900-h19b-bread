@@ -11,6 +11,7 @@ from app.lifecycle.enums import (
     VersionEventType,
 )
 from app.lifecycle.exceptions import ApiPermissionError
+from app.lifecycle.postgres_repository import PostgresLifecycleRepository
 from app.lifecycle.schemas import ValidationResultInput
 from app.lifecycle.service import LifecycleService
 
@@ -28,6 +29,9 @@ class FakeLifecycleRepository:
         self.validation_run_id = 90
         self.validation_overall_status = ValidationOverallStatus.RUNNING
         self.validation_stage_statuses = {}
+        self.connections_deprecated = False
+        self.stale_connection_runs_for = None
+        self.publication_call_order = []
 
     @contextmanager
     def transaction(self):
@@ -48,14 +52,22 @@ class FakeLifecycleRepository:
     def mark_api_withdrawn(self, api_id, actor_id, reason):
         self.status = ApiStatus.WITHDRAWN
 
+    def deprecate_api_connections(self, api_id):
+        self.connections_deprecated = True
+
     def get_current_version_id(self, api_id):
         return self.version_id
 
     def update_version_status(self, version_id, status):
+        self.publication_call_order.append("update_version")
         self.version_status = status
 
     def archive_previous_version(self, api_id, current_version_id):
         self.archived_previous = True
+
+    def stale_superseded_connection_runs(self, api_id, published_version_id):
+        self.publication_call_order.append("stale_connections")
+        self.stale_connection_runs_for = (api_id, published_version_id)
 
     def get_previous_published_version_id(self, api_id, current_version_id):
         return self.previous_published_version_id
@@ -160,6 +172,11 @@ def test_all_required_stages_publish_and_archive_previous_version() -> None:
     assert result.status == ApiStatus.PUBLISHED
     assert repository.validation_overall_status == ValidationOverallStatus.PASSED
     assert repository.archived_previous is True
+    assert repository.stale_connection_runs_for == (5, 12)
+    assert repository.publication_call_order[-2:] == [
+        "stale_connections",
+        "update_version",
+    ]
     assert repository.events[0]["event_type"] == VersionEventType.VALIDATION_PASSED
 
 
@@ -211,6 +228,7 @@ def test_withdraw_records_archive_event_with_actor() -> None:
     assert repository.events[0]["event_type"] == VersionEventType.ARCHIVED
     assert repository.events[0]["actor_user_id"] == 42
     assert repository.events[0]["to_status"].value == "ARCHIVED"
+    assert repository.connections_deprecated is True
 
 
 def test_rejected_api_can_be_withdrawn() -> None:
@@ -241,3 +259,91 @@ def test_global_admin_can_withdraw_another_users_api() -> None:
     )
 
     assert result.status == ApiStatus.WITHDRAWN
+
+
+def test_deprecate_api_connections_cancels_running_validation_runs() -> None:
+    class FakeCursor:
+        def __init__(self):
+            self.statements = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, statement, params=None):
+            self.statements.append((statement, params))
+
+    class FakeConnection:
+        def __init__(self, cursor):
+            self.cursor_obj = cursor
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self):
+            return self.cursor_obj
+
+    cursor = FakeCursor()
+    repository = PostgresLifecycleRepository(
+        connection_factory=lambda: FakeConnection(cursor)
+    )
+
+    repository.deprecate_api_connections(5)
+
+    assert len(cursor.statements) == 2
+    cancel_statement, params = cursor.statements[0]
+    assert "UPDATE connection_validation_run" in cancel_statement
+    assert "status = 'CANCELLED'" in cancel_statement
+    assert "status = 'RUNNING'" in cancel_statement
+    assert params == (5, 5)
+    assert "UPDATE schema_mapping" in cursor.statements[1][0]
+
+
+def test_version_publication_stales_running_runs_and_validating_mappings() -> None:
+    class FakeCursor:
+        def __init__(self):
+            self.statements = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, statement, params=None):
+            self.statements.append((statement, params))
+
+    class FakeConnection:
+        def __init__(self, cursor):
+            self.cursor_obj = cursor
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self):
+            return self.cursor_obj
+
+    cursor = FakeCursor()
+    repository = PostgresLifecycleRepository(
+        connection_factory=lambda: FakeConnection(cursor)
+    )
+
+    repository.stale_superseded_connection_runs(5, 12)
+
+    assert len(cursor.statements) == 2
+    run_statement, run_params = cursor.statements[0]
+    mapping_statement, mapping_params = cursor.statements[1]
+    assert "UPDATE connection_validation_run" in run_statement
+    assert "status IN ('RUNNING', 'PASSED')" in run_statement
+    assert "UPDATE schema_mapping" in mapping_statement
+    assert "lifecycle_status IN ('ACTIVE', 'VALIDATING')" in mapping_statement
+    assert run_params == (5, 12, 5, 12)
+    assert mapping_params == run_params

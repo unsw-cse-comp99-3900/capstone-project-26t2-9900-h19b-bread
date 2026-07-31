@@ -38,6 +38,9 @@ class LifecycleRepository(Protocol):
     ) -> None:
         """Update api_submission withdrawn_* fields and status."""
 
+    def deprecate_api_connections(self, api_id: int) -> None:
+        """Deprecate every connection that depends on a withdrawn API."""
+
     def get_current_version_id(self, api_id: int) -> int | None:
         """Return the active/latest api_version.version_id for the API."""
 
@@ -57,6 +60,13 @@ class LifecycleRepository(Protocol):
 
     def archive_previous_version(self, api_id: int, current_version_id: int) -> None:
         """Archive the previous published version in the cloud version chain."""
+
+    def stale_superseded_connection_runs(
+        self,
+        api_id: int,
+        published_version_id: int,
+    ) -> None:
+        """Mark passed connection runs stale after a different version is published."""
 
     def get_previous_published_version_id(
         self,

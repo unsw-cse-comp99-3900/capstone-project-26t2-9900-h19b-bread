@@ -19,6 +19,7 @@ class SchemaEntry:
     leaf_norm: str
     node: Dict[str, Any]
     node_type: str
+    is_required: bool
 
 def normalize_name(value: str) -> str:
     cleaned = re.sub(r"[^a-z0-9]", "", value.lower())
@@ -193,7 +194,12 @@ def _score_result(result: Dict[str, Any]) -> Tuple[int, int, int]:
     mapping = sum(1 for issue in result["issues"] if issue["kind"] == "mapping")
     return (order[result["compatibility"]], blocking, mapping)
 
-def build_index(node: Dict[str, Any], path: str = "$") -> List[SchemaEntry]:
+def build_index(
+    node: Dict[str, Any],
+    path: str = "$",
+    *,
+    is_required: bool = True,
+) -> List[SchemaEntry]:
     entries: List[SchemaEntry] = []
     node_type = node.get("type", "unknown")
     leaf = path.split(".")[-1].replace("[]", "").replace("$", "root")
@@ -204,16 +210,30 @@ def build_index(node: Dict[str, Any], path: str = "$") -> List[SchemaEntry]:
             leaf_norm=normalize_name(leaf),
             node=node,
             node_type=node_type,
+            is_required=is_required,
         )
     )
 
     if node_type == "object":
+        required_keys = set(node.get("required", []))
         for key, child in node.get("properties", {}).items():
             child_path = f"{path}.{key}" if path != "$" else key
-            entries.extend(build_index(child, child_path))
+            entries.extend(
+                build_index(
+                    child,
+                    child_path,
+                    is_required=is_required and key in required_keys,
+                )
+            )
     elif node_type == "array":
         child_path = f"{path}[]" if path != "$" else "[]"
-        entries.extend(build_index(node.get("items", {"type": "unknown"}), child_path))
+        entries.extend(
+            build_index(
+                node.get("items", {"type": "unknown"}),
+                child_path,
+                is_required=is_required,
+            )
+        )
 
     return entries
 
@@ -269,6 +289,7 @@ def _compare_nodes(
             return
 
         source_props = source_node.get("properties", {})
+        source_required = set(source_node.get("required", []))
         target_props = target_node.get("properties", {})
         target_required = set(target_node.get("required", []))
         matched_exact: Set[str] = set()
@@ -280,6 +301,8 @@ def _compare_nodes(
                 matched_exact.add(target_key)
                 child_source_path = f"{source_path}.{target_key}" if source_path != "$" else target_key
                 used_paths.add(child_source_path)
+                if target_key in target_required and target_key not in source_required:
+                    issues.append(_required_optional_issue(child_source_path, child_target_path))
                 _compare_nodes(
                     source_node=source_props[target_key],
                     target_node=target_child,
@@ -309,6 +332,8 @@ def _compare_nodes(
                     message=f"No exact field named '{target_key}' was found at this level, but '{candidate.path}' looks like a compatible source field.",
                     suggestion=f"Map '{candidate.path}' to '{child_target_path}'.",
                 ))
+                if target_key in target_required and not candidate.is_required:
+                    issues.append(_required_optional_issue(candidate.path, child_target_path))
                 _compare_nodes(
                     source_node=candidate.node,
                     target_node=target_child,
@@ -536,3 +561,21 @@ def summarize_issues(issues: List[Dict[str, Any]], compatibility: str) -> Dict[s
         "informational_issues": sum(1 for issue in issues if issue["kind"] == "info"),
         "issue_count": len(issues),
     }
+
+
+def _required_optional_issue(source_path: str, target_path: str) -> Dict[str, Any]:
+    return make_issue(
+        code="required_optional_conflict",
+        kind="mapping",
+        severity="warning",
+        source_path=source_path,
+        target_path=target_path,
+        message=(
+            f"Target field '{target_path}' is required, but source field "
+            f"'{source_path}' is optional."
+        ),
+        suggestion=(
+            "Provide a complete mapping with a reliable fallback and validate the "
+            "result against the target schema."
+        ),
+    )

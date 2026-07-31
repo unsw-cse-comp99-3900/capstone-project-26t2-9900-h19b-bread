@@ -5,6 +5,8 @@ from app.version_history import PostgresVersionHistoryRepository, VersionHistory
 from app.version_history.exceptions import VersionHistoryError
 from app.version_history.schemas import (
     EventPage,
+    ConnectionImpactPage,
+    MappingLifecycleStatus,
     VersionDetail,
     VersionEventType,
     VersionPage,
@@ -87,6 +89,29 @@ def list_version_events(
             event_type,
         )
         return EventPage.model_validate(result)
+    except VersionHistoryError as exc:
+        _raise_http_error(exc)
+
+
+@router.get("/{api_id}/connection-impacts", response_model=ConnectionImpactPage)
+def list_connection_impacts(
+    api_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    version_id: int | None = Query(default=None),
+    lifecycle_status: MappingLifecycleStatus | None = Query(default=None),
+    service: VersionHistoryService = Depends(get_version_history_service),
+    _current_user: dict = Depends(get_current_user),
+) -> ConnectionImpactPage:
+    try:
+        result = service.list_connection_impacts(
+            api_id,
+            page,
+            page_size,
+            version_id,
+            lifecycle_status,
+        )
+        return ConnectionImpactPage.model_validate(result)
     except VersionHistoryError as exc:
         _raise_http_error(exc)
 

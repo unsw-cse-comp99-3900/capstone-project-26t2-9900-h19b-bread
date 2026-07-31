@@ -19,6 +19,7 @@ Usage
     xml_out  = transform_to_xml(fn, source_document, root_tag="record")
 """
 
+import re
 import xml.etree.ElementTree as ET
 from typing import Any, Callable, Dict, List, Optional
 
@@ -62,17 +63,37 @@ def transform_to_xml(
     root_tag: str = "root",
 ) -> str:
     """Run the transformer and serialise the result to an XML string."""
-    result = transformer(source)
-    root = ET.Element(root_tag)
-    _dict_to_xml(result, root)
+    return serialize_to_xml(transformer(source), root_tag=root_tag)
+
+
+def serialize_to_xml(data: Dict[str, Any], root_tag: str | None = None) -> str:
+    """Serialise a transformed dictionary with a stable, non-duplicated root."""
+    preferred_root = root_tag if _is_xml_name(root_tag) else None
+    payload: Any = data
+    if len(data) == 1:
+        sole_key, sole_value = next(iter(data.items()))
+        if _is_xml_name(sole_key) and (preferred_root is None or preferred_root == sole_key):
+            preferred_root = sole_key
+            payload = sole_value
+
+    root = ET.Element(preferred_root or "root")
+    _dict_to_xml(payload, root)
     ET.indent(root, space="  ")
     return ET.tostring(root, encoding="unicode")
+
+
+def _is_xml_name(value: str | None) -> bool:
+    return bool(value and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", value))
 
 def _dict_to_xml(data: Any, parent: ET.Element) -> None:
     if isinstance(data, dict):
         for key, value in data.items():
-            child = ET.SubElement(parent, key)
-            _dict_to_xml(value, child)
+            if not _is_xml_name(str(key)):
+                raise TransformError(f"'{key}' is not a valid XML element name.")
+            values = value if isinstance(value, list) else [value]
+            for item in values:
+                child = ET.SubElement(parent, str(key))
+                _dict_to_xml(item, child)
     elif isinstance(data, list):
         for item in data:
             item_el = ET.SubElement(parent, "item")
@@ -174,7 +195,7 @@ def _compile_field(fm) -> Callable:
         caster = _make_caster(src_type, tgt_type)
         def rule(source, target, _src=src, _tgt=tgt, _cast=caster):
             value = _get_nested(source, _src)
-            _set_nested(target, _tgt, _cast(value))
+            _set_nested(target, _tgt, _cast_nested(value, _cast))
         return rule
 
     if transform == "wrap_array":
@@ -200,46 +221,94 @@ def _compile_field(fm) -> Callable:
     return rule
 
 def _get_nested(doc: Dict[str, Any], path: str) -> Any:
-    """
-    Retrieve a value from a nested dict using a dot-separated path.
-    Array items are accessed with [] notation: "data.items[].name"
-    is not supported at this level — arrays are treated as whole values.
-    """
+    """Read dot or slash paths, mapping explicit ``[]`` segments by index."""
     if path in ("$", "", None):
         return doc
-
-    parts = _split_path(path)
-    node = doc
-    for idx, part in enumerate(parts):
-        if node is None:
-            return None
-        if isinstance(node, list):
-            # If mid-path and hit a list, map the remainder over items.
-            remainder = ".".join(parts[idx:])
-            return [_get_nested(item, remainder) for item in node]
-        node = node.get(part) if isinstance(node, dict) else None
-    return node
+    return _get_path_value(doc, _path_tokens(path), 0)
 
 def _set_nested(doc: Dict[str, Any], path: str, value: Any) -> None:
-    """
-    Write a value into a nested dict, creating intermediate dicts as needed.
-    """
+    """Write dot or slash paths, merging explicit ``[]`` items by index."""
     if path in ("$", "", None):
         return
+    tokens = _path_tokens(path)
+    if tokens:
+        _set_path_value(doc, tokens, 0, value)
 
-    parts = _split_path(path)
-    node = doc
-    for part in parts[:-1]:
-        if part not in node or not isinstance(node[part], dict):
-            node[part] = {}
-        node = node[part]
-    node[parts[-1]] = value
+
+def _get_path_value(node: Any, tokens: list[tuple[str, bool]], index: int) -> Any:
+    if index == len(tokens):
+        return node
+    if not isinstance(node, dict):
+        return None
+    name, is_array = tokens[index]
+    child = node.get(name)
+    if not is_array:
+        return _get_path_value(child, tokens, index + 1)
+    if not isinstance(child, list):
+        return None
+    if index == len(tokens) - 1:
+        return child
+    return [_get_path_value(item, tokens, index + 1) for item in child]
+
+
+def _set_path_value(
+    node: Dict[str, Any],
+    tokens: list[tuple[str, bool]],
+    index: int,
+    value: Any,
+) -> None:
+    name, is_array = tokens[index]
+    is_last = index == len(tokens) - 1
+    if not is_array:
+        if is_last:
+            node[name] = value
+            return
+        child = node.get(name)
+        if not isinstance(child, dict):
+            child = {}
+            node[name] = child
+        _set_path_value(child, tokens, index + 1, value)
+        return
+
+    values = value if isinstance(value, list) else ([] if value is None else [value])
+    if is_last:
+        node[name] = values
+        return
+    children = node.get(name)
+    if not isinstance(children, list):
+        children = []
+        node[name] = children
+    while len(children) < len(values):
+        children.append({})
+    for item_index, item_value in enumerate(values):
+        if not isinstance(children[item_index], dict):
+            children[item_index] = {}
+        _set_path_value(children[item_index], tokens, index + 1, item_value)
+
+
+def _path_tokens(path: str) -> list[tuple[str, bool]]:
+    cleaned = path.lstrip("$./")
+    tokens = []
+    for raw_part in re.split(r"[/.]", cleaned):
+        if not raw_part:
+            continue
+        is_array = raw_part.endswith("[]")
+        name = raw_part[:-2] if is_array else raw_part
+        if name:
+            tokens.append((name, is_array))
+    return tokens
+
+
+def _cast_nested(value: Any, caster: Callable) -> Any:
+    if isinstance(value, list):
+        return [_cast_nested(item, caster) for item in value]
+    return None if value is None else caster(value)
 
 
 def _split_path(path: str) -> List[str]:
-    """Split a dot-separated path, stripping leading $ and [] array markers."""
+    """Split persisted slash or dot paths, stripping root and array markers."""
     cleaned = path.lstrip("$.")
-    parts = [p.replace("[]", "") for p in cleaned.split(".")]
+    parts = [part.replace("[]", "") for part in re.split(r"[/.]", cleaned)]
     return [p for p in parts if p]
 
 def _make_caster(src_type: Optional[str], tgt_type: Optional[str]) -> Callable:
@@ -303,7 +372,6 @@ def _setter(path: str, value_expr: str) -> str:
     return "\n".join(lines)
 
 def _safe_name(name: str) -> str:
-    import re
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
 
 class TransformError(Exception):

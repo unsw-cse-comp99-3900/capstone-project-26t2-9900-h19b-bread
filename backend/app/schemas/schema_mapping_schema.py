@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -117,3 +118,35 @@ class ApiSchemaTransformPreviewResponse(TransformPreviewResponse):
     transform_run_id: int | None = None
     comparison_result_id: int | None = None
     mapping_id: int
+    target_validation_passed: bool
+
+
+class MappingRuleInput(BaseModel):
+    source_path: str | None = None
+    target_path: str = Field(..., min_length=1)
+    transform: Literal[
+        "rename",
+        "cast",
+        "wrap_array",
+        "unwrap_array",
+        "constant",
+        "drop",
+        "missing",
+    ]
+    source_type: str | None = None
+    target_type: str | None = None
+    confidence: Literal["high", "medium", "low"] = "high"
+    note: str = ""
+
+
+class MappingRulesUpdateRequest(BaseModel):
+    rules: list[MappingRuleInput]
+
+
+class MappingRulesUpdateResponse(BaseModel):
+    mapping_id: int
+    lifecycle_status: str
+    completeness: str
+    updated_at: datetime
+    revalidation_required: bool
+    missing_required_targets: list[str]

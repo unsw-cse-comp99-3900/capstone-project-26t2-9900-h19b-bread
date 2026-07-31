@@ -47,6 +47,26 @@ class VersionHistoryService:
         )
         return {"items": items, "page": page, "page_size": page_size, "total": total}
 
+    def list_connection_impacts(
+        self,
+        api_id: int,
+        page: int,
+        page_size: int,
+        version_id: int | None,
+        lifecycle_status: str | None,
+    ) -> dict:
+        self._require_api(api_id)
+        if version_id is not None and self.repository.get_version(api_id, version_id) is None:
+            raise VersionNotFoundError(api_id, version_id)
+        items, total = self.repository.list_connection_impacts(
+            api_id,
+            page_size,
+            (page - 1) * page_size,
+            version_id,
+            lifecycle_status,
+        )
+        return {"items": items, "page": page, "page_size": page_size, "total": total}
+
     def create_version(self, api_id: int, current_user: dict, data: VersionWriteRequest) -> dict:
         with self.repository.transaction():
             api = self.repository.get_api(api_id, for_update=True)

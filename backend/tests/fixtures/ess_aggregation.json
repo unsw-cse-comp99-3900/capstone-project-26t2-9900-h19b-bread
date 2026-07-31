@@ -1,0 +1,21 @@
+{
+  "id": "agg-20240315-001",
+  "type": "aggregation",
+  "event": {
+    "time": "2024-03-15T09:30:00Z",
+    "actor": "data-pipeline-service",
+    "agent": "aggregation-engine-v2",
+    "trigger": "scheduled-daily-run"
+  },
+  "aggregate": {
+    "language": "SQL",
+    "expression": "SUM(order_total) GROUP BY customer_id",
+    "description": "Sum of all order totals grouped by customer for the current month"
+  },
+  "data": {
+    "source": ["orders_table", "customers_table", "transactions_table"],
+    "target": ["monthly_customer_summary", "reporting_dashboard"],
+    "description": "Aggregates raw order records into per-customer monthly spending summaries"
+  },
+  "value": "1523847.92"
+}

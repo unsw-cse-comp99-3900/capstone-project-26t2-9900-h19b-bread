@@ -64,6 +64,20 @@ class FakeVersionHistoryRepository:
         }
         self.created_by: int | None = None
         self.updated_by: int | None = None
+        self.connection_impacts = [
+            {
+                "mapping_id": 90,
+                "role": "SOURCE",
+                "api_version_id": 70,
+                "counterpart_api_id": 8,
+                "counterpart_version_id": 80,
+                "lifecycle_status": "STALE",
+                "completeness": "FULL",
+                "latest_validation_run_id": 900,
+                "latest_validation_run_status": "STALE",
+                "updated_at": datetime(2026, 7, 30),
+            }
+        ]
 
     @contextmanager
     def transaction(self):
@@ -98,6 +112,19 @@ class FakeVersionHistoryRepository:
     def update_version(self, api_id, version_id, actor_id, data):
         self.updated_by = actor_id
         self.versions[version_id]["version_number"] = data.version_number
+
+    def list_connection_impacts(
+        self,
+        api_id,
+        limit,
+        offset,
+        version_id,
+        lifecycle_status,
+    ):
+        items = self.connection_impacts
+        if lifecycle_status is not None:
+            items = [item for item in items if item["lifecycle_status"] == lifecycle_status]
+        return items[offset : offset + limit], len(items)
 
 
 def test_authenticated_history_read_has_no_enterprise_filter() -> None:
@@ -174,3 +201,13 @@ def test_published_version_cannot_be_updated() -> None:
             {"user_id": 10, "role": "PUBLISHER"},
             version_request("v1.1"),
         )
+
+
+def test_connection_impacts_can_be_filtered_by_lifecycle_status() -> None:
+    repository = FakeVersionHistoryRepository()
+    service = VersionHistoryService(repository)
+
+    result = service.list_connection_impacts(7, 1, 20, 70, "STALE")
+
+    assert result["total"] == 1
+    assert result["items"][0]["latest_validation_run_status"] == "STALE"

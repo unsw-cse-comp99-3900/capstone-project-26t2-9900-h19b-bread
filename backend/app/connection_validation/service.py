@@ -3,15 +3,21 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from app.connection_validation.enums import CompatibilityLevel
 from app.connection_validation.pipeline import ConnectionValidationPipeline
 from app.connection_validation.repository import (
+    ConnectionValidationConflictError,
     ConnectionValidationNotFoundError,
+    ConnectionValidationPermissionError,
     ConnectionValidationRepository,
 )
 from app.connection_validation.schemas import (
     ConnectionValidationContext,
+    ConnectionLifecycleResponse,
     ConnectionValidationRequest,
     ConnectionValidationResponse,
+    ConnectionValidationRunDetail,
+    ConnectionValidationRunPage,
     MappingContext,
 )
 from app.services.schema_mapping.compatibility_engine import compare_schemas
@@ -49,7 +55,8 @@ class ConnectionValidationService:
         )
         if source is None:
             raise ConnectionValidationNotFoundError(
-                f"Source API {request.source_api_id} version {request.source_version_id} was not found."
+                f"Source API {request.source_api_id} version {request.source_version_id} was not found.",
+                "SOURCE_VERSION_NOT_FOUND",
             )
         target = self.repository.get_version(
             request.target_api_id,
@@ -57,7 +64,12 @@ class ConnectionValidationService:
         )
         if target is None:
             raise ConnectionValidationNotFoundError(
-                f"Target API {request.target_api_id} version {request.target_version_id} was not found."
+                f"Target API {request.target_api_id} version {request.target_version_id} was not found.",
+                "TARGET_VERSION_NOT_FOUND",
+            )
+        if request.source_version_id == request.target_version_id:
+            raise ConnectionValidationConflictError(
+                "Source and target must be different versions."
             )
 
         self.repository.assert_actor_can_validate(
@@ -79,14 +91,20 @@ class ConnectionValidationService:
             request.target_schema_id,
         )
 
-        mapping = None
-        if source_schema is not None and target_schema is not None:
-            metadata = self.repository.get_mapping_metadata(
-                request,
-                source_schema.schema_id,
-                target_schema.schema_id,
-            )
-            if metadata is not None:
+        run_id = self.repository.create_run(request, actor_id)
+        try:
+            mapping = None
+            if (
+                source.status == "PUBLISHED"
+                and target.status == "PUBLISHED"
+                and source_schema is not None
+                and target_schema is not None
+            ):
+                metadata = self.repository.prepare_mapping(
+                    request,
+                    source_schema,
+                    target_schema,
+                )
                 detail = self.mapping_loader(metadata["mapping_id"])
                 if detail is not None:
                     mapping = MappingContext(
@@ -96,19 +114,17 @@ class ConnectionValidationService:
                         transform=build_transformer(detail["mapping"]),
                     )
 
-        context = ConnectionValidationContext(
-            source=source,
-            target=target,
-            source_schema=source_schema,
-            target_schema=target_schema,
-            aliases=self.repository.list_format_aliases(),
-            mapping=mapping,
-            sample_data=request.sample_data,
-        )
-        run_id = self.repository.create_run(request, actor_id)
-        try:
+            context = ConnectionValidationContext(
+                source=source,
+                target=target,
+                source_schema=source_schema,
+                target_schema=target_schema,
+                aliases=self.repository.list_format_aliases(),
+                mapping=mapping,
+                sample_data=request.sample_data,
+            )
             decision = self.pipeline.run(context)
-            result_id = self.repository.save_decision(
+            persisted = self.repository.save_decision(
                 run_id,
                 request,
                 context,
@@ -120,11 +136,36 @@ class ConnectionValidationService:
 
         return ConnectionValidationResponse(
             connection_validation_run_id=run_id,
-            compatibility_result_id=result_id,
-            compatibility_level=decision.compatibility_level,
-            reason_code=decision.reason_code,
-            reason=decision.reason,
-            activation_allowed=decision.activation_allowed,
+            compatibility_result_id=persisted.compatibility_result_id,
+            transform_run_id=persisted.transform_run_id,
+            mapping_id=persisted.mapping_id,
+            lifecycle_status=persisted.lifecycle_status,
+            is_latest_run=persisted.is_latest_run,
+            compatibility_level=(
+                decision.compatibility_level
+                if persisted.is_latest_run and persisted.lifecycle_status != "DEPRECATED"
+                else CompatibilityLevel.NOT_ASSESSABLE
+            ),
+            reason_code=(
+                "CONNECTION_DEPRECATED"
+                if persisted.lifecycle_status == "DEPRECATED"
+                else decision.reason_code
+                if persisted.is_latest_run
+                else "STALE_VALIDATION_RUN"
+            ),
+            reason=(
+                "The connection was deprecated while validation was running."
+                if persisted.lifecycle_status == "DEPRECATED"
+                else decision.reason
+                if persisted.is_latest_run
+                else "A newer validation run superseded this result."
+            ),
+            activation_allowed=(
+                decision.activation_allowed
+                and persisted.is_latest_run
+                and persisted.lifecycle_status == "ACTIVE"
+            ),
+            business_rules_diagnostics=decision.business_rules_diagnostics,
             source_api_id=request.source_api_id,
             source_version_id=request.source_version_id,
             target_api_id=request.target_api_id,
@@ -134,3 +175,86 @@ class ConnectionValidationService:
             stages=decision.stages,
             reasons=decision.reasons,
         )
+
+    def get_connection(
+        self,
+        mapping_id: int,
+        *,
+        enterprise_id: int,
+        is_admin: bool = False,
+    ) -> ConnectionLifecycleResponse:
+        connection = self._get_authorized_connection(mapping_id, enterprise_id, is_admin)
+        return ConnectionLifecycleResponse.model_validate(connection)
+
+    def get_run(
+        self,
+        run_id: int,
+        *,
+        enterprise_id: int,
+        is_admin: bool = False,
+    ) -> ConnectionValidationRunDetail:
+        run = self.repository.get_run(run_id)
+        if run is None:
+            raise ConnectionValidationNotFoundError(
+                f"Connection validation run {run_id} was not found."
+            )
+        if not is_admin and run["source_enterprise_id"] != enterprise_id:
+            raise ConnectionValidationPermissionError(
+                "Only the source API owner or an administrator may read this validation run."
+            )
+        return ConnectionValidationRunDetail.model_validate(run)
+
+    def list_connection_runs(
+        self,
+        mapping_id: int,
+        page: int,
+        page_size: int,
+        *,
+        enterprise_id: int,
+        is_admin: bool = False,
+    ) -> ConnectionValidationRunPage:
+        connection = self._get_authorized_connection(mapping_id, enterprise_id, is_admin)
+        items, total = self.repository.list_runs(
+            connection["source_api_id"],
+            connection["source_version_id"],
+            connection["target_api_id"],
+            connection["target_version_id"],
+            page_size,
+            (page - 1) * page_size,
+        )
+        return ConnectionValidationRunPage.model_validate(
+            {"items": items, "page": page, "page_size": page_size, "total": total}
+        )
+
+    def deprecate_connection(
+        self,
+        mapping_id: int,
+        *,
+        enterprise_id: int,
+        is_admin: bool = False,
+    ) -> ConnectionLifecycleResponse:
+        connection = self._get_authorized_connection(mapping_id, enterprise_id, is_admin)
+        if connection["lifecycle_status"] == "VALIDATING":
+            raise ConnectionValidationConflictError(
+                "A validating connection cannot be deprecated until its active run completes."
+            )
+        if connection["lifecycle_status"] != "DEPRECATED":
+            connection = self.repository.deprecate_connection(mapping_id)
+        return ConnectionLifecycleResponse.model_validate(connection)
+
+    def _get_authorized_connection(
+        self,
+        mapping_id: int,
+        enterprise_id: int,
+        is_admin: bool,
+    ) -> dict[str, Any]:
+        connection = self.repository.get_connection(mapping_id)
+        if connection is None:
+            raise ConnectionValidationNotFoundError(
+                f"Connection mapping {mapping_id} was not found."
+            )
+        if not is_admin and connection["source_enterprise_id"] != enterprise_id:
+            raise ConnectionValidationPermissionError(
+                "Only the source API owner or an administrator may manage this connection."
+            )
+        return connection

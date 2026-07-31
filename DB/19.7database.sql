@@ -15,7 +15,7 @@
 --
 -- Layer C (connection check) uses api_version metadata only:
 --   input_format / output_format / capability_category
---   Result states: COMPATIBLE | INCOMPATIBLE | MISSING_INFORMATION (+ reason)
+--   Result states: DIRECTLY_COMPATIBLE | COMPATIBLE_WITH_MAPPING | INCOMPATIBLE | NOT_ASSESSABLE
 --   Not field mapping; not deep payload processing; not single-API publish validation.
 --   Layer E remains optional and only weakly linked via compatibility_result_id.
 --
@@ -33,6 +33,7 @@
 -- ------------------------------------------------------------
 DROP FUNCTION IF EXISTS enforce_connection_schema_roles() CASCADE;
 DROP FUNCTION IF EXISTS mark_mappings_stale_for_new_version() CASCADE;
+DROP FUNCTION IF EXISTS warn_unknown_version_formats() CASCADE;
 DROP TABLE IF EXISTS transform_run CASCADE;
 DROP TABLE IF EXISTS mapping_rule CASCADE;
 DROP TABLE IF EXISTS connection_validation_stage_result CASCADE;
@@ -122,7 +123,7 @@ CREATE TYPE schema_direction_type AS ENUM ('INPUT', 'OUTPUT');
 CREATE TYPE schema_payload_format AS ENUM ('JSON', 'XML');
 -- API-to-API connection check (A.output → B.input); not field-level mapping
 CREATE TYPE compatibility_level_type AS ENUM (
-    'COMPATIBLE', 'INCOMPATIBLE', 'MISSING_INFORMATION'
+    'DIRECTLY_COMPATIBLE', 'COMPATIBLE_WITH_MAPPING', 'INCOMPATIBLE', 'NOT_ASSESSABLE'
 );
 CREATE TYPE compatibility_reason_severity AS ENUM (
     'INFO', 'WARNING', 'ERROR'
@@ -174,7 +175,7 @@ COMMENT ON TYPE version_event_type IS 'Custom DataType: version timeline event';
 COMMENT ON TYPE api_category_type IS 'Custom DataType from capstone: transformation/validation/communication';
 COMMENT ON TYPE schema_direction_type IS 'Custom DataType from capstone schemas.direction';
 COMMENT ON TYPE schema_payload_format IS 'Custom DataType from capstone schemas.format';
-COMMENT ON TYPE compatibility_level_type IS 'API connection check: COMPATIBLE / INCOMPATIBLE / MISSING_INFORMATION';
+COMMENT ON TYPE compatibility_level_type IS 'API connection check: direct, mapping-assisted, incompatible, or not assessable';
 COMMENT ON TYPE mapping_lifecycle_status IS 'Custom DataType: mapping package lifecycle';
 COMMENT ON TYPE compatibility_reason_severity IS 'Custom DataType: severity of a structured connection-validation reason';
 COMMENT ON TYPE connection_validation_run_status IS 'Custom DataType: overall state of an API-to-API connection validation run';
@@ -511,6 +512,45 @@ CREATE UNIQUE INDEX uq_format_alias_raw_ci ON format_alias (lower(btrim(raw_valu
 COMMENT ON TABLE format_alias IS 'Stage 2 vocabulary for deterministic comparison of free-text input/output format values';
 COMMENT ON COLUMN format_alias.is_terminal_output IS 'TRUE when the value is a terminal report/result that must not feed another API';
 
+-- Warn catalogue maintainers when a version introduces an unregistered format.
+CREATE FUNCTION warn_unknown_version_formats()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    unknown_formats TEXT[];
+BEGIN
+    SELECT array_agg(candidate.raw_value ORDER BY candidate.raw_value)
+    INTO unknown_formats
+    FROM (
+        SELECT DISTINCT btrim(value) AS raw_value
+        FROM jsonb_array_elements_text(
+            COALESCE(NEW.input_formats, '[]'::jsonb)
+            || COALESCE(NEW.output_formats, '[]'::jsonb)
+        ) AS formats(value)
+        WHERE btrim(value) <> ''
+    ) AS candidate
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM format_alias alias
+        WHERE lower(btrim(alias.raw_value)) = lower(candidate.raw_value)
+    );
+
+    IF cardinality(unknown_formats) > 0 THEN
+        RAISE WARNING 'api_version % contains unregistered format aliases: %',
+            COALESCE(NEW.version_id::TEXT, '(pending)'),
+            array_to_string(unknown_formats, ', ');
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_warn_unknown_version_formats
+    BEFORE INSERT OR UPDATE OF input_formats, output_formats ON api_version
+    FOR EACH ROW EXECUTE FUNCTION warn_unknown_version_formats();
+
+COMMENT ON FUNCTION warn_unknown_version_formats() IS 'Emits a non-blocking warning when api_version format arrays contain values missing from format_alias';
+
 -- associative entity: compatibility_result — version-pair connection check
 CREATE TABLE compatibility_result (
     result_id              SERIAL PRIMARY KEY,
@@ -529,7 +569,7 @@ CREATE TABLE compatibility_result (
     full_result            JSONB,
     created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT chk_compat_not_same_api CHECK (source_api_id <> target_api_id),
+    CONSTRAINT chk_compat_not_same_version CHECK (source_version_id <> target_version_id),
     CONSTRAINT chk_compat_reason_code CHECK (reason_code ~ '^[A-Z][A-Z0-9_]*$'),
     CONSTRAINT uq_compat_version_pair UNIQUE (source_version_id, target_version_id),
     CONSTRAINT fk_compat_source_api
@@ -597,7 +637,7 @@ CREATE TABLE connection_validation_run (
     started_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at           TIMESTAMP,
 
-    CONSTRAINT chk_connection_run_not_same_api CHECK (source_api_id <> target_api_id),
+    CONSTRAINT chk_connection_run_not_same_version CHECK (source_version_id <> target_version_id),
     CONSTRAINT chk_connection_run_completion CHECK (
         (status = 'RUNNING' AND completed_at IS NULL)
         OR (status <> 'RUNNING' AND completed_at IS NOT NULL)
@@ -667,7 +707,7 @@ CREATE TABLE schema_mapping (
     created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT chk_schema_mapping_not_same_api CHECK (source_api_id <> target_api_id),
+    CONSTRAINT chk_schema_mapping_not_same_version CHECK (source_version_id <> target_version_id),
     CONSTRAINT chk_active_mapping_complete CHECK (
         lifecycle_status <> 'ACTIVE' OR completeness = 'FULL'
     ),
@@ -918,8 +958,12 @@ INSERT INTO format_alias (raw_value, normalized_value, family, is_terminal_outpu
     ('UBL', 'UBL', 'UBL', FALSE, 'Generic UBL document'),
     ('UBL XML', 'UBL_XML', 'UBL', FALSE, 'UBL serialized as XML'),
     ('UBL XML format', 'UBL_XML', 'UBL', FALSE, 'Catalogue alias'),
-    ('PDF', 'PDF', 'DOCUMENT', TRUE, 'Human-readable terminal document'),
-    ('Validation Report', 'VALIDATION_REPORT', 'REPORT', TRUE, 'Terminal validation output');
+    ('PDF', 'PDF', 'DOCUMENT', FALSE, 'Reusable document input/output; terminal semantics depend on API context'),
+    ('Validation Report', 'VALIDATION_REPORT', 'REPORT', TRUE, 'Terminal validation output'),
+    ('Status Codes', 'STATUS_CODES', 'REPORT', TRUE, 'Terminal status output'),
+    ('Email receipts', 'EMAIL_RECEIPTS', 'DOCUMENT', FALSE, 'Raw document input for extraction APIs'),
+    ('Images', 'IMAGES', 'IMAGE', FALSE, 'Image document input/output'),
+    ('Scans', 'SCANS', 'IMAGE', FALSE, 'Scanned document input');
 
 INSERT INTO enterprise (name, registration_number, website_url, status) VALUES
     ('Demo Supply Chain Enterprise', 'ENT-0001', 'https://example.com', 'ACTIVE'),

@@ -1,6 +1,9 @@
+import pytest
+
 import app.services.schema_mapping.service as schema_mapping_service
 from app.services.schema_mapping.mapping_engine import FieldMapping, SchemaMapping
 from app.services.schema_mapping.repository import PostgresSchemaMappingRepository
+from app.services.schema_mapping.schema_transformer import build_transformer
 from app.services.schema_mapping.service import (
     SchemaMappingError,
     build_compatibility_matrix,
@@ -9,6 +12,8 @@ from app.services.schema_mapping.service import (
     infer_json_schema_from_sample,
     infer_xml_schema_from_sample,
     transform_preview,
+    transform_database_mapping_preview,
+    update_database_mapping_rules,
 )
 
 
@@ -71,6 +76,37 @@ def test_compare_schema_pair_detects_rename_mapping():
     assert result["issues"][0]["target_path"] == "user_id"
 
 
+def test_compare_schema_pair_detects_required_optional_conflict():
+    source = {
+        "type": "object",
+        "properties": {"id": {"type": "string"}},
+        "required": [],
+    }
+    target = {
+        "type": "object",
+        "properties": {"id": {"type": "string"}},
+        "required": ["id"],
+    }
+
+    result = compare_schema_pair(source, target)
+
+    assert result["compatibility"] == "compatible_with_mapping"
+    assert result["issues"] == [
+        {
+            "code": "required_optional_conflict",
+            "kind": "mapping",
+            "severity": "warning",
+            "source_path": "id",
+            "target_path": "id",
+            "message": "Target field 'id' is required, but source field 'id' is optional.",
+            "suggestion": (
+                "Provide a complete mapping with a reliable fallback and validate the "
+                "result against the target schema."
+            ),
+        }
+    ]
+
+
 def test_transform_preview_casts_and_renames_without_database():
     source = _object_schema(
         {
@@ -97,6 +133,135 @@ def test_transform_preview_casts_and_renames_without_database():
     assert result["mapping_status"] == "partial"
     assert result["result"] == {"user_id": 7, "amount": 12.5}
     assert "transform_sourceapi_to_targetapi" in result["transform_code"]
+
+
+def test_transform_preview_uses_target_xml_root():
+    source = _object_schema({"id": _field("string")})
+    target = {
+        "root": "Invoice",
+        "schema": _object_schema({"id": _field("string")}),
+    }
+
+    result = transform_preview(
+        source_schema=source,
+        target_schema=target,
+        data={"id": "INV-1"},
+        output_format="xml",
+    )
+
+    assert result["result"].startswith("<Invoice>")
+    assert "<id>INV-1</id>" in result["result"]
+
+
+def test_transform_preview_rejects_output_that_fails_target_validation():
+    source = _object_schema({"id": _field("string")})
+    target = _object_schema(
+        {
+            "id": _field("string"),
+            "required_target": _field("string"),
+        }
+    )
+
+    with pytest.raises(SchemaMappingError, match="required_target"):
+        transform_preview(
+            source_schema=source,
+            target_schema=target,
+            data={"id": "INV-1"},
+        )
+
+
+def test_transformer_supports_persisted_slash_field_paths():
+    mapping = SchemaMapping(
+        source="Source",
+        target="Target",
+        status="full",
+        fields=[
+            FieldMapping(
+                source_path="Invoice/ID",
+                target_path="Invoice/ID",
+                transform="rename",
+                source_type="string",
+                target_type="string",
+                confidence="high",
+                note="Persisted slash path.",
+            )
+        ],
+    )
+
+    transformed = build_transformer(mapping)({"Invoice": {"ID": "INV-100"}})
+
+    assert transformed == {"Invoice": {"ID": "INV-100"}}
+
+
+def test_transformer_merges_array_field_rules_by_item_index():
+    mapping = SchemaMapping(
+        source="Source",
+        target="Target",
+        status="full",
+        fields=[
+            FieldMapping(
+                source_path="Invoice/Lines[]/ID",
+                target_path="Invoice/Items[]/Identifier",
+                transform="rename",
+                source_type="string",
+                target_type="string",
+                confidence="high",
+                note="Rename array item ID.",
+            ),
+            FieldMapping(
+                source_path="Invoice/Lines[]/Amount",
+                target_path="Invoice/Items[]/Total",
+                transform="cast",
+                source_type="string",
+                target_type="number",
+                confidence="high",
+                note="Cast each array item amount.",
+            ),
+        ],
+    )
+    source = {
+        "Invoice": {
+            "Lines": [
+                {"ID": "A", "Amount": "10.5"},
+                {"ID": "B", "Amount": "20"},
+            ]
+        }
+    }
+
+    transformed = build_transformer(mapping)(source)
+
+    assert transformed == {
+        "Invoice": {
+            "Items": [
+                {"Identifier": "A", "Total": 10.5},
+                {"Identifier": "B", "Total": 20.0},
+            ]
+        }
+    }
+
+
+def test_transformer_can_copy_a_whole_array_path():
+    mapping = SchemaMapping(
+        source="Source",
+        target="Target",
+        status="full",
+        fields=[
+            FieldMapping(
+                source_path="lines[]",
+                target_path="items[]",
+                transform="rename",
+                source_type="array",
+                target_type="array",
+                confidence="high",
+                note="Copy array.",
+            )
+        ],
+    )
+    source = {"lines": [{"id": "A"}, {"id": "B"}]}
+
+    transformed = build_transformer(mapping)(source)
+
+    assert transformed == {"items": [{"id": "A"}, {"id": "B"}]}
 
 
 def test_build_compatibility_matrix_returns_same_schema_diagonal():
@@ -177,6 +342,61 @@ def test_save_mapping_upserts_by_schema_pair_not_version_pair():
     assert mapping_id == 17
     assert "ON CONFLICT (source_schema_id, target_schema_id)" in insert_statement
     assert "ON CONFLICT (source_api_id, target_api_id, source_version_id, target_version_id)" not in insert_statement
+    assert ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'DRAFT', %s)" in insert_statement
+
+
+def test_replace_mapping_rules_stales_passed_runs_for_version_pair():
+    class SequenceCursor(_FakeCursor):
+        def __init__(self):
+            super().__init__()
+            self.rows = [
+                {
+                    "lifecycle_status": "ACTIVE",
+                    "source_api_id": 1,
+                    "source_version_id": 10,
+                    "target_api_id": 2,
+                    "target_version_id": 20,
+                },
+                {
+                    "mapping_id": 7,
+                    "lifecycle_status": "STALE",
+                    "completeness": "FULL",
+                    "updated_at": "2026-07-31T12:00:00",
+                },
+            ]
+
+        def fetchone(self):
+            return self.rows.pop(0)
+
+    cursor = SequenceCursor()
+    repository = PostgresSchemaMappingRepository(
+        connection_factory=lambda: _FakeConnection(cursor)
+    )
+
+    result = repository.replace_mapping_rules(
+        7,
+        [
+            FieldMapping(
+                source_path="Invoice/ID",
+                target_path="Invoice/ID",
+                transform="rename",
+                source_type="string",
+                target_type="string",
+                confidence="high",
+                note="Direct match",
+            )
+        ],
+        "FULL",
+    )
+
+    stale_statement = next(
+        (statement, params)
+        for statement, params in cursor.statements
+        if "UPDATE connection_validation_run" in statement
+    )
+    assert stale_statement[1] == (1, 10, 2, 20)
+    assert "status = 'PASSED'" in stale_statement[0]
+    assert result["lifecycle_status"] == "STALE"
 
 
 def test_list_api_schemas_only_returns_published_api_versions():
@@ -223,3 +443,370 @@ def test_compare_database_api_schemas_rejects_unpublished_schema(monkeypatch):
         assert "published APIs" in str(exc)
     else:
         raise AssertionError("Expected draft schema mapping to be rejected.")
+
+
+def test_compare_database_api_schemas_enforces_output_to_input(monkeypatch):
+    class FakeRepository:
+        def get_api_schema(self, schema_id):
+            return {
+                "schema_id": schema_id,
+                "api_id": 1 if schema_id == 101 else 2,
+                "api_name": "API",
+                "version_id": schema_id,
+                "api_status": "PUBLISHED",
+                "version_status": "PUBLISHED",
+                "direction": "INPUT",
+                "format": "JSON",
+                "schema_definition": _object_schema({"id": _field("string")}),
+            }
+
+    monkeypatch.setattr(schema_mapping_service, "repository", FakeRepository())
+
+    try:
+        compare_database_api_schemas(101, 202)
+    except SchemaMappingError as exc:
+        assert "OUTPUT direction" in str(exc)
+    else:
+        raise AssertionError("Expected INPUT source schema to be rejected.")
+
+
+def test_compare_database_api_schemas_allows_same_api_different_versions(monkeypatch):
+    class FakeRepository:
+        def get_api_schema(self, schema_id):
+            is_source = schema_id == 101
+            return {
+                "schema_id": schema_id,
+                "api_id": 1,
+                "api_name": "Versioned API",
+                "version_id": 10 if is_source else 20,
+                "api_status": "PUBLISHED",
+                "version_status": "PUBLISHED",
+                "direction": "OUTPUT" if is_source else "INPUT",
+                "format": "JSON",
+                "schema_definition": _object_schema({"id": _field("string")}),
+            }
+
+    monkeypatch.setattr(schema_mapping_service, "repository", FakeRepository())
+
+    result = compare_database_api_schemas(101, 202, save_mapping=False)
+
+    assert result["comparison"]["compatibility"] == "directly_compatible"
+
+
+def test_compare_database_api_schemas_rejects_same_version(monkeypatch):
+    class FakeRepository:
+        def get_api_schema(self, schema_id):
+            is_source = schema_id == 101
+            return {
+                "schema_id": schema_id,
+                "api_id": 1,
+                "api_name": "Versioned API",
+                "version_id": 10,
+                "api_status": "PUBLISHED",
+                "version_status": "PUBLISHED",
+                "direction": "OUTPUT" if is_source else "INPUT",
+                "format": "JSON",
+                "schema_definition": _object_schema({"id": _field("string")}),
+            }
+
+    monkeypatch.setattr(schema_mapping_service, "repository", FakeRepository())
+
+    with pytest.raises(SchemaMappingError, match="different versions"):
+        compare_database_api_schemas(101, 202, save_mapping=False)
+
+
+def test_transform_database_mapping_validates_target_and_records_failure(monkeypatch):
+    class FakeRepository:
+        saved = None
+
+        def get_mapping(self, mapping_id):
+            mapping = SchemaMapping(
+                source="Source",
+                target="Target",
+                status="full",
+                fields=[
+                    FieldMapping(
+                        source_path="amount",
+                        target_path="amount",
+                        transform="rename",
+                        source_type="string",
+                        target_type="integer",
+                        confidence="high",
+                        note="Direct copy for test.",
+                    )
+                ],
+            )
+            return {
+                "row": {
+                    "mapping_id": mapping_id,
+                    "source_api_id": 1,
+                    "target_api_id": 2,
+                    "source_schema_id": 101,
+                    "target_schema_id": 202,
+                    "source_version_id": 10,
+                    "target_version_id": 20,
+                    "compatibility_result_id": None,
+                },
+                "source_schema": {
+                    "schema_definition": _object_schema({"amount": _field("string")})
+                },
+                "target_schema": {
+                    "schema_definition": _object_schema({"amount": _field("integer")})
+                },
+                "mapping": mapping,
+                "comparison": {},
+            }
+
+        def save_transform_run(self, **kwargs):
+            self.saved = kwargs
+            return 55
+
+    fake = FakeRepository()
+    monkeypatch.setattr(schema_mapping_service, "repository", fake)
+
+    try:
+        transform_database_mapping_preview(7, {"amount": "invalid"})
+    except SchemaMappingError as exc:
+        assert "Validation failed" in str(exc)
+    else:
+        raise AssertionError("Expected target validation to reject transformed output.")
+
+    assert fake.saved["success"] is False
+    assert fake.saved["error_message"]
+
+
+def test_transform_database_mapping_uses_target_xml_root(monkeypatch):
+    class FakeRepository:
+        saved = None
+
+        def get_mapping(self, mapping_id):
+            mapping = SchemaMapping(
+                source="Source",
+                target="Target",
+                status="full",
+                fields=[
+                    FieldMapping(
+                        source_path="id",
+                        target_path="id",
+                        transform="rename",
+                        source_type="string",
+                        target_type="string",
+                        confidence="high",
+                        note="Direct copy for test.",
+                    )
+                ],
+            )
+            schema = _object_schema({"id": _field("string")})
+            return {
+                "row": {
+                    "mapping_id": mapping_id,
+                    "source_api_id": 1,
+                    "target_api_id": 2,
+                    "source_schema_id": 101,
+                    "target_schema_id": 202,
+                    "source_version_id": 10,
+                    "target_version_id": 20,
+                    "compatibility_result_id": None,
+                },
+                "source_schema": {"schema_definition": schema},
+                "target_schema": {
+                    "schema_definition": schema,
+                    "source_path": "Invoice",
+                },
+                "mapping": mapping,
+                "comparison": {},
+            }
+
+        def save_transform_run(self, **kwargs):
+            self.saved = kwargs
+            return 55
+
+    fake = FakeRepository()
+    monkeypatch.setattr(schema_mapping_service, "repository", fake)
+
+    result = transform_database_mapping_preview(
+        7,
+        {"id": "INV-1"},
+        output_format="xml",
+    )
+
+    assert result["result"].startswith("<Invoice>")
+    assert fake.saved["output_data"] == result["result"]
+
+
+def test_mapping_rule_update_recomputes_completeness_and_requires_revalidation(monkeypatch):
+    class FakeRepository:
+        completeness = None
+
+        def get_mapping(self, mapping_id):
+            return {
+                "row": {
+                    "mapping_id": mapping_id,
+                    "source_api_id": 1,
+                    "lifecycle_status": "ACTIVE",
+                },
+                "target_schema": {
+                    "schema_definition": _object_schema(
+                        {"id": _field("string"), "amount": _field("number")}
+                    )
+                },
+            }
+
+        def replace_mapping_rules(self, mapping_id, fields, completeness):
+            self.completeness = completeness
+            return {
+                "mapping_id": mapping_id,
+                "lifecycle_status": "STALE",
+                "completeness": completeness,
+                "updated_at": "2026-07-30T12:00:00",
+            }
+
+    fake = FakeRepository()
+    monkeypatch.setattr(schema_mapping_service, "repository", fake)
+
+    result = update_database_mapping_rules(
+        7,
+        [
+            {
+                "source_path": "id",
+                "target_path": "id",
+                "transform": "rename",
+            }
+        ],
+    )
+
+    assert fake.completeness == "PARTIAL"
+    assert result["lifecycle_status"] == "STALE"
+    assert result["revalidation_required"] is True
+    assert result["missing_required_targets"] == ["amount"]
+
+
+def test_mapping_rule_update_treats_slash_and_dot_paths_as_equivalent(monkeypatch):
+    class FakeRepository:
+        completeness = None
+
+        def get_mapping(self, mapping_id):
+            return {
+                "row": {
+                    "mapping_id": mapping_id,
+                    "source_api_id": 1,
+                    "lifecycle_status": "ACTIVE",
+                },
+                "target_schema": {
+                    "schema_definition": _object_schema(
+                        {"Invoice": _object_schema({"ID": _field("string")})}
+                    )
+                },
+            }
+
+        def replace_mapping_rules(self, mapping_id, fields, completeness):
+            self.completeness = completeness
+            return {
+                "mapping_id": mapping_id,
+                "lifecycle_status": "STALE",
+                "completeness": completeness,
+                "updated_at": "2026-07-31T12:00:00",
+            }
+
+    fake = FakeRepository()
+    monkeypatch.setattr(schema_mapping_service, "repository", fake)
+
+    result = update_database_mapping_rules(
+        7,
+        [
+            {
+                "source_path": "Invoice/ID",
+                "target_path": "Invoice/ID",
+                "transform": "rename",
+            }
+        ],
+    )
+
+    assert fake.completeness == "FULL"
+    assert result["missing_required_targets"] == []
+
+
+def test_mapping_rule_update_rejects_equivalent_duplicate_paths(monkeypatch):
+    class FakeRepository:
+        def get_mapping(self, mapping_id):
+            return {
+                "row": {
+                    "mapping_id": mapping_id,
+                    "source_api_id": 1,
+                    "lifecycle_status": "DRAFT",
+                },
+                "target_schema": {
+                    "schema_definition": _object_schema(
+                        {"Invoice": _object_schema({"ID": _field("string")})}
+                    )
+                },
+            }
+
+    monkeypatch.setattr(schema_mapping_service, "repository", FakeRepository())
+
+    with pytest.raises(SchemaMappingError, match="at most one"):
+        update_database_mapping_rules(
+            7,
+            [
+                {
+                    "source_path": "Invoice/ID",
+                    "target_path": "Invoice/ID",
+                    "transform": "rename",
+                },
+                {
+                    "source_path": "Invoice.ID",
+                    "target_path": "Invoice.ID",
+                    "transform": "rename",
+                },
+            ],
+        )
+
+
+def test_mapping_rule_update_covers_required_array_item_paths(monkeypatch):
+    class FakeRepository:
+        completeness = None
+
+        def get_mapping(self, mapping_id):
+            return {
+                "row": {
+                    "mapping_id": mapping_id,
+                    "source_api_id": 1,
+                    "lifecycle_status": "DRAFT",
+                },
+                "target_schema": {
+                    "schema_definition": _object_schema(
+                        {
+                            "lines": {
+                                "type": "array",
+                                "items": _object_schema({"id": _field("string")}),
+                            }
+                        }
+                    )
+                },
+            }
+
+        def replace_mapping_rules(self, mapping_id, fields, completeness):
+            self.completeness = completeness
+            return {
+                "mapping_id": mapping_id,
+                "lifecycle_status": "DRAFT",
+                "completeness": completeness,
+                "updated_at": "2026-07-31T12:00:00",
+            }
+
+    fake = FakeRepository()
+    monkeypatch.setattr(schema_mapping_service, "repository", fake)
+
+    result = update_database_mapping_rules(
+        7,
+        [
+            {
+                "source_path": "lines[]/id",
+                "target_path": "lines[]/id",
+                "transform": "rename",
+            }
+        ],
+    )
+
+    assert fake.completeness == "FULL"
+    assert result["missing_required_targets"] == []
