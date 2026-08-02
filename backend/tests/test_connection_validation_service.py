@@ -32,7 +32,6 @@ class FakeRepository:
         )
         self.saved = None
         self.cancelled = []
-        self.prepared = []
         self.connection = {
             "mapping_id": 66,
             "source_api_id": 1,
@@ -92,45 +91,18 @@ class FakeRepository:
     def list_format_aliases(self):
         return [FormatAlias("JSON", "JSON", "JSON")]
 
-    def get_mapping_metadata(self, request, source_schema_id, target_schema_id):
-        return None
-
-    def prepare_mapping(self, request, source_schema, target_schema):
-        self.prepared.append((source_schema.schema_id, target_schema.schema_id))
-        return {
-            "mapping_id": 66,
-            "lifecycle_status": "VALIDATING",
-            "completeness": "PARTIAL",
-        }
-
     def create_run(self, request, created_by):
         return 77
 
     def save_decision(self, run_id, request, context, decision):
         self.saved = (run_id, decision)
-        return PersistedDecision(88, 66, "ACTIVE", True, 99)
+        return PersistedDecision(88, None, None, True, None)
 
     def cancel_run(self, run_id):
         self.cancelled.append(run_id)
 
-    def get_connection(self, mapping_id):
-        return self.connection if mapping_id == 66 else None
-
     def get_run(self, run_id):
         return self.run if run_id == 77 else None
-
-    def list_runs(self, *args):
-        self.list_runs_args = args
-        summary = {
-            key: value
-            for key, value in self.run.items()
-            if key not in {"stages", "source_enterprise_id"}
-        }
-        return [summary], 1
-
-    def deprecate_connection(self, mapping_id):
-        self.connection["lifecycle_status"] = "DEPRECATED"
-        return self.connection
 
 
 def _request():
@@ -145,7 +117,7 @@ def _request():
 
 def test_service_loads_fixed_context_and_persists_decision():
     repository = FakeRepository()
-    service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
+    service = ConnectionValidationService(repository)
 
     response = service.validate(
         _request(),
@@ -155,9 +127,9 @@ def test_service_loads_fixed_context_and_persists_decision():
 
     assert response.connection_validation_run_id == 77
     assert response.compatibility_result_id == 88
-    assert response.transform_run_id == 99
-    assert response.mapping_id == 66
-    assert response.lifecycle_status == "ACTIVE"
+    assert response.transform_run_id is None
+    assert response.mapping_id is None
+    assert response.lifecycle_status is None
     assert response.reason_code == "DIRECTLY_COMPATIBLE"
     assert response.activation_allowed is True
     assert response.business_rules_diagnostics == {
@@ -167,13 +139,12 @@ def test_service_loads_fixed_context_and_persists_decision():
         "disjoint_rules": [],
     }
     assert repository.saved[0] == 77
-    assert repository.prepared == [(100, 200)]
 
 
 def test_service_rejects_unknown_version_before_creating_run():
     repository = FakeRepository()
     repository.source = None
-    service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
+    service = ConnectionValidationService(repository)
 
     with pytest.raises(ConnectionValidationNotFoundError) as exc_info:
         service.validate(_request(), actor_id=5, enterprise_id=9)
@@ -185,7 +156,7 @@ def test_service_rejects_unknown_version_before_creating_run():
 def test_service_rejects_same_version_pair_before_creating_run():
     repository = FakeRepository()
     repository.target = repository.source
-    service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
+    service = ConnectionValidationService(repository)
     request = ConnectionValidationRequest(
         source_api_id=1,
         source_version_id=10,
@@ -198,13 +169,12 @@ def test_service_rejects_same_version_pair_before_creating_run():
         service.validate(request, actor_id=5, enterprise_id=9)
 
     assert repository.saved is None
-    assert repository.prepared == []
 
 
 def test_service_allows_same_api_with_different_versions():
     repository = FakeRepository()
     repository.target = EndpointVersion(1, 20, "PUBLISHED", ["JSON"], [])
-    service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
+    service = ConnectionValidationService(repository)
     request = ConnectionValidationRequest(
         source_api_id=1,
         source_version_id=10,
@@ -227,7 +197,6 @@ def test_service_cancels_run_when_pipeline_raises():
     repository = FakeRepository()
     service = ConnectionValidationService(
         repository,
-        mapping_loader=lambda _: None,
         pipeline=BrokenPipeline(),
     )
 
@@ -244,7 +213,7 @@ def test_service_suppresses_activation_for_superseded_run():
         return PersistedDecision(None, 66, "VALIDATING", False)
 
     repository.save_decision = save_stale
-    service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
+    service = ConnectionValidationService(repository)
 
     response = service.validate(_request(), actor_id=5, enterprise_id=9)
 
@@ -254,58 +223,36 @@ def test_service_suppresses_activation_for_superseded_run():
     assert response.activation_allowed is False
 
 
-def test_service_reports_deprecated_connection_when_run_was_cancelled():
+def test_service_does_not_expose_mapping_lifecycle_from_persistence():
     repository = FakeRepository()
 
     def save_cancelled(run_id, request, context, decision):
         return PersistedDecision(None, 66, "DEPRECATED", True)
 
     repository.save_decision = save_cancelled
-    service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
+    service = ConnectionValidationService(repository)
 
     response = service.validate(_request(), actor_id=5, enterprise_id=9)
 
-    assert response.compatibility_level.value == "NOT_ASSESSABLE"
-    assert response.reason_code == "CONNECTION_DEPRECATED"
-    assert response.activation_allowed is False
+    assert response.compatibility_level.value == "DIRECTLY_COMPATIBLE"
+    assert response.reason_code == "DIRECTLY_COMPATIBLE"
+    assert response.mapping_id is None
+    assert response.lifecycle_status is None
+    assert response.activation_allowed is True
 
 
-def test_source_owner_can_read_and_deprecate_connection():
+def test_source_owner_can_read_run_detail():
     repository = FakeRepository()
-    service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
-
-    current = service.get_connection(66, enterprise_id=9)
-    deprecated = service.deprecate_connection(66, enterprise_id=9)
-
-    assert current.lifecycle_status == "ACTIVE"
-    assert deprecated.lifecycle_status == "DEPRECATED"
-
-
-def test_validating_connection_cannot_be_deprecated():
-    repository = FakeRepository()
-    repository.connection["lifecycle_status"] = "VALIDATING"
-    service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
-
-    with pytest.raises(ValueError, match="cannot be deprecated"):
-        service.deprecate_connection(66, enterprise_id=9)
-
-
-def test_source_owner_can_read_run_detail_and_connection_history():
-    repository = FakeRepository()
-    service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
+    service = ConnectionValidationService(repository)
 
     run = service.get_run(77, enterprise_id=9)
-    history = service.list_connection_runs(66, 2, 10, enterprise_id=9)
 
     assert run.stages[0].stage.value == "ELIGIBILITY"
-    assert history.total == 1
-    assert history.page == 2
-    assert repository.list_runs_args == (1, 10, 2, 20, 10, 10)
 
 
 def test_other_enterprise_cannot_read_validation_run():
     repository = FakeRepository()
-    service = ConnectionValidationService(repository, mapping_loader=lambda _: None)
+    service = ConnectionValidationService(repository)
 
     with pytest.raises(ConnectionValidationPermissionError):
         service.get_run(77, enterprise_id=10)

@@ -65,20 +65,6 @@ class ConnectionValidationResponse(BaseModel):
     reasons: list[ReasonItem]
 
 
-class ConnectionLifecycleResponse(BaseModel):
-    mapping_id: int
-    source_api_id: int
-    source_version_id: int
-    target_api_id: int
-    target_version_id: int
-    source_schema_id: int | None = None
-    target_schema_id: int | None = None
-    compatibility_result_id: int | None = None
-    lifecycle_status: str
-    completeness: str
-    updated_at: datetime
-
-
 class ConnectionValidationRunSummary(BaseModel):
     connection_validation_run_id: int
     source_api_id: int
@@ -95,13 +81,6 @@ class ConnectionValidationRunSummary(BaseModel):
 
 class ConnectionValidationRunDetail(ConnectionValidationRunSummary):
     stages: list[StageResult]
-
-
-class ConnectionValidationRunPage(BaseModel):
-    items: list[ConnectionValidationRunSummary]
-    page: int
-    page_size: int
-    total: int
 
 
 @dataclass(frozen=True)

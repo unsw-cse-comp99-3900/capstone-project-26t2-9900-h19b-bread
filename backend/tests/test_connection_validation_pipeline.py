@@ -52,6 +52,15 @@ def _pipeline():
     return ConnectionValidationPipeline(compare_schemas, validate_data)
 
 
+def _direct_pipeline():
+    return ConnectionValidationPipeline(
+        compare_schemas,
+        validate_data,
+        allow_mapping=False,
+        require_sample=False,
+    )
+
+
 def test_directly_compatible_pair_passes_all_required_gates():
     decision = _pipeline().run(_context())
 
@@ -66,6 +75,58 @@ def test_directly_compatible_pair_passes_all_required_gates():
         ConnectionValidationStageStatus.PASSED,
         ConnectionValidationStageStatus.PASSED,
     ]
+
+
+def test_direct_mode_does_not_use_mapping_for_schema_differences():
+    target = _schema(200, "INPUT", {"invoice_id": {"type": "string"}})
+    transform_calls = []
+    mapping = MappingContext(
+        mapping_id=7,
+        lifecycle_status="ACTIVE",
+        completeness="FULL",
+        transform=lambda data: transform_calls.append(data) or {"invoice_id": data["id"]},
+    )
+
+    decision = _direct_pipeline().run(
+        _context(target_schema=target, mapping=mapping)
+    )
+
+    assert decision.compatibility_level == CompatibilityLevel.INCOMPATIBLE
+    assert decision.reason_code == "SCHEMA_NOT_DIRECTLY_COMPATIBLE"
+    assert decision.activation_allowed is False
+    assert transform_calls == []
+
+
+def test_direct_mode_allows_static_validation_without_sample_payload():
+    decision = _direct_pipeline().run(_context(sample_data=None))
+
+    assert decision.compatibility_level == CompatibilityLevel.DIRECTLY_COMPATIBLE
+    assert decision.activation_allowed is True
+    assert decision.stages[3].status == ConnectionValidationStageStatus.NOT_RUN
+    assert all(stage.stage.value != "MAPPING_CHECK" for stage in decision.stages)
+
+
+def test_direct_mode_rejects_format_bridge_that_requires_transform():
+    target_schema = PayloadSchema(
+        schema_id=200,
+        direction="INPUT",
+        format="XML",
+        definition=_context().source_schema.definition,
+    )
+    decision = _direct_pipeline().run(
+        _context(
+            target=EndpointVersion(2, 20, "PUBLISHED", ["XML"], []),
+            target_schema=target_schema,
+            aliases=[
+                FormatAlias("JSON", "JSON", "JSON"),
+                FormatAlias("XML", "XML", "XML"),
+            ],
+        )
+    )
+
+    assert decision.compatibility_level == CompatibilityLevel.INCOMPATIBLE
+    assert decision.reason_code == "FORMAT_MISMATCH"
+    assert decision.activation_allowed is False
 
 
 def test_terminal_output_fails_and_persists_not_run_shape():

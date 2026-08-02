@@ -1,16 +1,14 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.connection_validation import (
     ConnectionValidationConflictError,
-    ConnectionLifecycleResponse,
     ConnectionValidationNotFoundError,
     ConnectionValidationPermissionError,
     ConnectionValidationRequest,
     ConnectionValidationResponse,
     ConnectionValidationRunDetail,
-    ConnectionValidationRunPage,
     PostgresConnectionValidationRepository,
 )
 from app.connection_validation.service import ConnectionValidationService
@@ -65,69 +63,3 @@ def get_validation_run_endpoint(
         raise HTTPException(status_code=404, detail=_not_found_detail(exc)) from exc
     except ConnectionValidationPermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-
-
-@router.get("/connections/{mapping_id}", response_model=ConnectionLifecycleResponse)
-def get_connection_endpoint(
-    mapping_id: int,
-    service: ConnectionValidationService = Depends(get_connection_validation_service),
-    current_user: dict[str, Any] = Depends(get_connection_validation_actor),
-) -> ConnectionLifecycleResponse:
-    try:
-        return service.get_connection(
-            mapping_id,
-            enterprise_id=current_user["enterprise_id"],
-            is_admin=str(current_user["role"]).upper() == "ADMIN",
-        )
-    except ConnectionValidationNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=_not_found_detail(exc)) from exc
-    except ConnectionValidationPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-
-
-@router.get(
-    "/connections/{mapping_id}/runs",
-    response_model=ConnectionValidationRunPage,
-)
-def list_connection_runs_endpoint(
-    mapping_id: int,
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
-    service: ConnectionValidationService = Depends(get_connection_validation_service),
-    current_user: dict[str, Any] = Depends(get_connection_validation_actor),
-) -> ConnectionValidationRunPage:
-    try:
-        return service.list_connection_runs(
-            mapping_id,
-            page,
-            page_size,
-            enterprise_id=current_user["enterprise_id"],
-            is_admin=str(current_user["role"]).upper() == "ADMIN",
-        )
-    except ConnectionValidationNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=_not_found_detail(exc)) from exc
-    except ConnectionValidationPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-
-
-@router.post(
-    "/connections/{mapping_id}/deprecate",
-    response_model=ConnectionLifecycleResponse,
-)
-def deprecate_connection_endpoint(
-    mapping_id: int,
-    service: ConnectionValidationService = Depends(get_connection_validation_service),
-    current_user: dict[str, Any] = Depends(get_connection_validation_actor),
-) -> ConnectionLifecycleResponse:
-    try:
-        return service.deprecate_connection(
-            mapping_id,
-            enterprise_id=current_user["enterprise_id"],
-            is_admin=str(current_user["role"]).upper() == "ADMIN",
-        )
-    except ConnectionValidationNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=_not_found_detail(exc)) from exc
-    except ConnectionValidationPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except ConnectionValidationConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc

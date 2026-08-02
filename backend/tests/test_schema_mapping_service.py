@@ -445,7 +445,7 @@ def test_compare_database_api_schemas_rejects_unpublished_schema(monkeypatch):
         raise AssertionError("Expected draft schema mapping to be rejected.")
 
 
-def test_compare_database_api_schemas_enforces_output_to_input(monkeypatch):
+def test_compare_database_api_schemas_allows_any_schema_directions(monkeypatch):
     class FakeRepository:
         def get_api_schema(self, schema_id):
             return {
@@ -462,12 +462,9 @@ def test_compare_database_api_schemas_enforces_output_to_input(monkeypatch):
 
     monkeypatch.setattr(schema_mapping_service, "repository", FakeRepository())
 
-    try:
-        compare_database_api_schemas(101, 202)
-    except SchemaMappingError as exc:
-        assert "OUTPUT direction" in str(exc)
-    else:
-        raise AssertionError("Expected INPUT source schema to be rejected.")
+    result = compare_database_api_schemas(101, 202, save_mapping=False)
+
+    assert result["comparison"]["compatibility"] == "directly_compatible"
 
 
 def test_compare_database_api_schemas_allows_same_api_different_versions(monkeypatch):

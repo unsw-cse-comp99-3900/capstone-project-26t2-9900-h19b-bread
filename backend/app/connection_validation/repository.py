@@ -43,14 +43,6 @@ class ConnectionValidationRepository(Protocol):
     def list_format_aliases(self) -> list[FormatAlias]:
         ...
 
-    def get_mapping_metadata(
-        self,
-        request: ConnectionValidationRequest,
-        source_schema_id: int,
-        target_schema_id: int,
-    ) -> dict | None:
-        ...
-
     def assert_actor_can_validate(
         self,
         source_api_id: int,
@@ -67,32 +59,7 @@ class ConnectionValidationRepository(Protocol):
     ) -> int:
         ...
 
-    def prepare_mapping(
-        self,
-        request: ConnectionValidationRequest,
-        source_schema: PayloadSchema,
-        target_schema: PayloadSchema,
-    ) -> dict:
-        ...
-
-    def get_connection(self, mapping_id: int) -> dict | None:
-        ...
-
     def get_run(self, run_id: int) -> dict | None:
-        ...
-
-    def list_runs(
-        self,
-        source_api_id: int,
-        source_version_id: int,
-        target_api_id: int,
-        target_version_id: int,
-        limit: int,
-        offset: int,
-    ) -> tuple[list[dict], int]:
-        ...
-
-    def deprecate_connection(self, mapping_id: int) -> dict | None:
         ...
 
     def save_decision(

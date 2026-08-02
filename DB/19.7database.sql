@@ -784,13 +784,7 @@ CREATE TRIGGER trg_compatibility_schema_roles
     ON compatibility_result
     FOR EACH ROW EXECUTE FUNCTION enforce_connection_schema_roles();
 
-CREATE TRIGGER trg_mapping_schema_roles
-    BEFORE INSERT OR UPDATE OF source_api_id, target_api_id,
-        source_version_id, target_version_id, source_schema_id, target_schema_id
-    ON schema_mapping
-    FOR EACH ROW EXECUTE FUNCTION enforce_connection_schema_roles();
-
-COMMENT ON FUNCTION enforce_connection_schema_roles() IS 'Ensures connection source schemas are OUTPUT and target schemas are INPUT for the selected API versions';
+COMMENT ON FUNCTION enforce_connection_schema_roles() IS 'Ensures compatibility-validation source schemas are OUTPUT and target schemas are INPUT; generic schema mappings are direction-agnostic';
 
 -- Publishing a new endpoint version invalidates active mappings on older versions.
 CREATE FUNCTION mark_mappings_stale_for_new_version()

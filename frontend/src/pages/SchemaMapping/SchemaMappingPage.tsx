@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Col,
+  Collapse,
   Input,
   Row,
   Space,
@@ -35,6 +36,11 @@ import {
   type SchemaCompareResponse,
   type TransformPreviewResponse,
 } from "../../services/schemaMapping";
+import {
+  validateConnection,
+  type ConnectionValidationResult,
+  type ConnectionValidationStageStatus,
+} from "../../services/connectionValidation";
 import "./SchemaMapping.scss";
 
 const { Title, Text, Paragraph } = Typography;
@@ -67,6 +73,24 @@ const compatColor = (level: string): string => {
   if (v.includes("full") || v.includes("compatible")) return "success";
   return "default";
 };
+
+const validationCompatColor = (level: string): string => {
+  if (level === "INCOMPATIBLE") return "error";
+  if (level === "NOT_ASSESSABLE") return "default";
+  if (level === "COMPATIBLE_WITH_MAPPING") return "warning";
+  return "success";
+};
+
+const stageColor = (status: ConnectionValidationStageStatus): string => {
+  if (status === "PASSED") return "success";
+  if (status === "FAILED") return "error";
+  if (status === "MISSING_INFORMATION") return "warning";
+  if (status === "RUNNING") return "processing";
+  return "default";
+};
+
+const hasDirection = (direction: string, expected: "INPUT" | "OUTPUT") =>
+  direction.toUpperCase() === expected;
 
 const SchemaMappingPage: React.FC = () => {
   const navigate = useNavigate();
@@ -114,17 +138,32 @@ const SchemaMappingPage: React.FC = () => {
     '{\n  "Invoice": {\n    "ID": "INV-001",\n    "IssueDate": "2026-07-22",\n    "PayableAmount": 120.5\n  }\n}',
   );
   const [dbOutputFormat, setDbOutputFormat] = useState<"json" | "xml">("json");
+  const [validationSourceSchemaId, setValidationSourceSchemaId] = useState<number | null>(null);
+  const [validationTargetSchemaId, setValidationTargetSchemaId] = useState<number | null>(null);
+  const [validationSampleText, setValidationSampleText] = useState("");
+  const [validationLoading, setValidationLoading] = useState(false);
+  const [validationResult, setValidationResult] = useState<ConnectionValidationResult | null>(null);
 
   const loadDbSchemas = async () => {
     setDbLoading(true);
     try {
       const schemas = await listApiSchemas();
       setApiSchemas(schemas);
+      const outputSchema = schemas.find((schema) => hasDirection(schema.direction, "OUTPUT"));
+      const inputSchema = schemas.find((schema) => hasDirection(schema.direction, "INPUT"));
+      const currentValidationSource = schemas.find((schema) => schema.schema_id === validationSourceSchemaId);
+      const currentValidationTarget = schemas.find((schema) => schema.schema_id === validationTargetSchemaId);
       if (schemas.length > 0 && sourceSchemaId == null) {
         setSourceSchemaId(schemas[0].schema_id);
       }
       if (schemas.length > 1 && targetSchemaId == null) {
         setTargetSchemaId(schemas[1].schema_id);
+      }
+      if (outputSchema && (!currentValidationSource || !hasDirection(currentValidationSource.direction, "OUTPUT"))) {
+        setValidationSourceSchemaId(outputSchema.schema_id);
+      }
+      if (inputSchema && (!currentValidationTarget || !hasDirection(currentValidationTarget.direction, "INPUT"))) {
+        setValidationTargetSchemaId(inputSchema.schema_id);
       }
     } finally {
       setDbLoading(false);
@@ -183,6 +222,24 @@ const SchemaMappingPage: React.FC = () => {
         };
       }),
     [apiSchemas],
+  );
+
+  const sourceSchemaOptions = useMemo(
+    () => schemaOptions.filter((option) => hasDirection(apiSchemas.find((schema) => schema.schema_id === option.value)?.direction ?? "", "OUTPUT")),
+    [apiSchemas, schemaOptions],
+  );
+  const targetSchemaOptions = useMemo(
+    () => schemaOptions.filter((option) => hasDirection(apiSchemas.find((schema) => schema.schema_id === option.value)?.direction ?? "", "INPUT")),
+    [apiSchemas, schemaOptions],
+  );
+
+  const validationSourceSchema = useMemo(
+    () => apiSchemas.find((schema) => schema.schema_id === validationSourceSchemaId) ?? null,
+    [apiSchemas, validationSourceSchemaId],
+  );
+  const validationTargetSchema = useMemo(
+    () => apiSchemas.find((schema) => schema.schema_id === validationTargetSchemaId) ?? null,
+    [apiSchemas, validationTargetSchemaId],
   );
 
   const handleInferSourceFromSample = async () => {
@@ -317,6 +374,43 @@ const SchemaMappingPage: React.FC = () => {
     }
   };
 
+  const handleValidateConnection = async () => {
+    if (!validationSourceSchema || !validationTargetSchema) {
+      message.error("Select a published OUTPUT source and INPUT target schema.");
+      return;
+    }
+    if (validationSourceSchema.version_id === validationTargetSchema.version_id) {
+      message.error("Source and target must be different API versions.");
+      return;
+    }
+    setValidationLoading(true);
+    setValidationResult(null);
+    try {
+      const sample_data = validationSampleText.trim()
+        ? parseJsonObject(validationSampleText, "Sample data")
+        : undefined;
+      const result = await validateConnection({
+        source_api_id: validationSourceSchema.api_id,
+        source_version_id: validationSourceSchema.version_id,
+        target_api_id: validationTargetSchema.api_id,
+        target_version_id: validationTargetSchema.version_id,
+        source_schema_id: validationSourceSchema.schema_id,
+        target_schema_id: validationTargetSchema.schema_id,
+        sample_data,
+      });
+      setValidationResult(result);
+      if (result.activation_allowed) {
+        message.success("Connection validation passed. Connection can be activated.");
+      } else {
+        message.warning("Connection cannot be activated. Review the validation results.");
+      }
+    } catch (err) {
+      if (err instanceof Error) message.error(err.message);
+    } finally {
+      setValidationLoading(false);
+    }
+  };
+
   return (
     <PublisherLayout>
       <div className="smp-page">
@@ -351,6 +445,122 @@ const SchemaMappingPage: React.FC = () => {
 
         <Tabs
           items={[
+            {
+              key: "connection-validation",
+              label: "Connection Validation",
+              children: (
+                <div className="smp-panel">
+                  <Alert
+                    showIcon
+                    type="info"
+                    message="Validate before connecting"
+                    description="Only published OUTPUT schemas can be sources and published INPUT schemas can be targets. A connection remains disabled unless the validation result allows activation."
+                  />
+                  <Card title="Connection contract" className="smp-card" bordered={false}>
+                    <Row gutter={[12, 12]}>
+                      <Col xs={24} lg={12}>
+                        <Text type="secondary">Source API version (OUTPUT)</Text>
+                        <Select
+                          value={validationSourceSchemaId ?? undefined}
+                          onChange={setValidationSourceSchemaId}
+                          options={sourceSchemaOptions}
+                          loading={dbLoading}
+                          placeholder="Choose a source output"
+                          style={{ width: "100%", marginTop: 6 }}
+                        />
+                      </Col>
+                      <Col xs={24} lg={12}>
+                        <Text type="secondary">Target API version (INPUT)</Text>
+                        <Select
+                          value={validationTargetSchemaId ?? undefined}
+                          onChange={setValidationTargetSchemaId}
+                          options={targetSchemaOptions}
+                          loading={dbLoading}
+                          placeholder="Choose a target input"
+                          style={{ width: "100%", marginTop: 6 }}
+                        />
+                      </Col>
+                    </Row>
+                    <Text type="secondary" style={{ display: "block", marginTop: 16 }}>
+                      Sample source payload (optional)
+                    </Text>
+                    <TextArea
+                      rows={8}
+                      value={validationSampleText}
+                      onChange={(e) => setValidationSampleText(e.target.value)}
+                      className="smp-code"
+                      style={{ marginTop: 6 }}
+                    />
+                    <Space wrap style={{ marginTop: 12 }}>
+                      <Button loading={dbLoading} onClick={() => void loadDbSchemas()}>
+                        Reload schemas
+                      </Button>
+                      <Button
+                        type="primary"
+                        loading={validationLoading}
+                        onClick={() => void handleValidateConnection()}
+                      >
+                        Validate connection
+                      </Button>
+                    </Space>
+                  </Card>
+
+                  {validationResult && (
+                    <Card title="Validation result" className="smp-card" bordered={false}>
+                      <Space wrap style={{ marginBottom: 12 }}>
+                        <Tag color={validationCompatColor(validationResult.compatibility_level)}>
+                          {validationResult.compatibility_level}
+                        </Tag>
+                        <Tag color={validationResult.activation_allowed ? "success" : "error"}>
+                          {validationResult.activation_allowed ? "Connection enabled" : "Connection blocked"}
+                        </Tag>
+                        <Tag>run #{validationResult.connection_validation_run_id}</Tag>
+                      </Space>
+                      <Alert
+                        showIcon
+                        type={validationResult.activation_allowed ? "success" : "warning"}
+                        message={validationResult.reason}
+                        description={`Reason code: ${validationResult.reason_code}`}
+                      />
+                      <Title level={5} style={{ marginTop: 18 }}>Validation stages</Title>
+                      <div className="smp-stages">
+                        {validationResult.stages.map((stage) => (
+                          <div className="smp-stage" key={stage.stage}>
+                            <Tag color={stageColor(stage.status)}>{stage.status}</Tag>
+                            <div>
+                              <Text strong>{stage.stage}</Text>
+                              <div><Text type="secondary">{stage.message}</Text></div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <Title level={5} style={{ marginTop: 18 }}>Issues</Title>
+                      <Table
+                        size="small"
+                        pagination={false}
+                        dataSource={validationResult.reasons.map((reason, index) => ({ ...reason, key: index }))}
+                        columns={[
+                          { title: "Severity", dataIndex: "severity", width: 110, render: (severity: string) => <Tag color={severity === "ERROR" ? "error" : severity === "WARNING" ? "warning" : "blue"}>{severity}</Tag> },
+                          { title: "Stage", dataIndex: "stage", width: 160 },
+                          { title: "Path", width: 200, render: (_, row: { source_path: string | null; target_path: string | null }) => row.source_path || row.target_path ? `${row.source_path ?? "—"} → ${row.target_path ?? "—"}` : "—" },
+                          { title: "Message", dataIndex: "message" },
+                        ]}
+                        locale={{ emptyText: "No validation issues reported." }}
+                      />
+                      <Collapse
+                        style={{ marginTop: 16 }}
+                        items={[{
+                          key: "business-rules",
+                          label: "Business rules diagnostics (informational)",
+                          children: <pre className="smp-pre">{JSON.stringify(validationResult.business_rules_diagnostics, null, 2)}</pre>,
+                        }]}
+                      />
+                    </Card>
+                  )}
+
+                </div>
+              ),
+            },
             {
               key: "database",
               label: "Database Flow",

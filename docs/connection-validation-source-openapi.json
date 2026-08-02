@@ -1,0 +1,106 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Connection Validation Source API",
+    "version": "1.0.0",
+    "description": "Test fixture whose invoice response is directly accepted by the Connection Validation Target API."
+  },
+  "servers": [
+    {
+      "url": "https://connection-source.example.com/v1"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Transmission",
+      "description": "Invoice delivery endpoints."
+    }
+  ],
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/invoices/latest": {
+      "get": {
+        "tags": [
+          "Transmission"
+        ],
+        "summary": "Get an invoice for downstream delivery",
+        "operationId": "getLatestInvoice",
+        "responses": {
+          "200": {
+            "description": "Invoice payload produced for the target API",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoicePayload"
+                },
+                "example": {
+                  "invoiceId": "INV-2026-0001",
+                  "supplierTaxId": "AU123456789",
+                  "buyerTaxId": "AU987654321",
+                  "issueDate": "2026-07-31",
+                  "currency": "AUD",
+                  "amount": 120.5
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Invoice not found"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    },
+    "schemas": {
+      "InvoicePayload": {
+        "type": "object",
+        "required": [
+          "invoiceId",
+          "supplierTaxId",
+          "buyerTaxId",
+          "issueDate",
+          "currency",
+          "amount"
+        ],
+        "properties": {
+          "invoiceId": {
+            "type": "string"
+          },
+          "supplierTaxId": {
+            "type": "string"
+          },
+          "buyerTaxId": {
+            "type": "string"
+          },
+          "issueDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "currency": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "amount": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}
