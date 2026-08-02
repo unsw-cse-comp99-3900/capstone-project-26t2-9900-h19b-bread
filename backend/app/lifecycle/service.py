@@ -134,6 +134,7 @@ class LifecycleService:
             )
             if target_status == ApiStatus.PUBLISHED:
                 self.repository.archive_previous_version(api_id, version_id)
+                self.repository.stale_superseded_connection_runs(api_id, version_id)
             self.repository.update_version_status(
                 version_id,
                 self._to_version_status(target_status),
@@ -207,6 +208,7 @@ class LifecycleService:
                 actor_id=actor_id,
                 reason=reason,
             )
+            self.repository.deprecate_api_connections(api_id)
             self.repository.update_version_status(version_id, ApiVersionStatus.ARCHIVED)
             self.repository.create_version_event(
                 api_id,

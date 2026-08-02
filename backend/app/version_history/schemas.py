@@ -10,6 +10,9 @@ AuthMethodType = Literal[
     "OAUTH2", "API_KEY", "BASIC", "TOKEN", "BEARER", "MTLS", "NONE", "OTHER"
 ]
 SpecificationType = Literal["OPENAPI", "SWAGGER", "WSDL"]
+MappingLifecycleStatus = Literal[
+    "DRAFT", "VALIDATING", "ACTIVE", "FAILED", "STALE", "DEPRECATED"
+]
 VersionEventType = Literal[
     "CREATED",
     "UPDATED",
@@ -122,6 +125,26 @@ class VersionEvent(BaseModel):
 
 class EventPage(BaseModel):
     items: list[VersionEvent]
+    page: int
+    page_size: int
+    total: int
+
+
+class ConnectionImpact(BaseModel):
+    mapping_id: int
+    role: Literal["SOURCE", "TARGET"]
+    api_version_id: int
+    counterpart_api_id: int
+    counterpart_version_id: int
+    lifecycle_status: str
+    completeness: str
+    latest_validation_run_id: int | None
+    latest_validation_run_status: str | None
+    updated_at: datetime
+
+
+class ConnectionImpactPage(BaseModel):
+    items: list[ConnectionImpact]
     page: int
     page_size: int
     total: int

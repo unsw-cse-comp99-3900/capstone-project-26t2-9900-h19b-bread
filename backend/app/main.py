@@ -12,6 +12,7 @@ from app.lifecycle import (
 )
 from app.routers import (
     auth,
+    connection_validation,
     lifecycle,
     schema_mapping,
     submissions,
@@ -30,6 +31,7 @@ app.add_middleware(
 )
 
 app.include_router(validation.router, prefix="/api/v1")
+app.include_router(connection_validation.router, prefix="/api/v1")
 app.include_router(schema_mapping.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(submissions.router, prefix="/api/v1")

@@ -1,0 +1,715 @@
+from __future__ import annotations
+
+import re
+from collections.abc import Callable
+from typing import Any
+
+from app.connection_validation.enums import (
+    CompatibilityLevel,
+    ConnectionValidationStage,
+    ConnectionValidationStageStatus,
+    ReasonSeverity,
+)
+from app.connection_validation.schemas import (
+    ConnectionValidationContext,
+    ConnectionValidationDecision,
+    FormatAlias,
+    ReasonItem,
+    StageResult,
+    TransformExecution,
+)
+from app.services.schema_mapping.schema_transformer import serialize_to_xml
+
+
+SchemaComparator = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
+TargetValidator = Callable[[dict[str, Any], dict[str, Any]], tuple[bool, str | None]]
+
+STAGE_ORDER = list(ConnectionValidationStage)
+SUPPORTED_SCHEMA_FORMATS = {"JSON", "XML"}
+MACHINE_READABLE_FORMAT_FAMILIES = {"JSON", "XML", "UBL"}
+
+
+class ConnectionValidationPipeline:
+    def __init__(
+        self,
+        compare_schemas: SchemaComparator,
+        validate_target: TargetValidator,
+        *,
+        allow_mapping: bool = True,
+        require_sample: bool = True,
+    ) -> None:
+        self.compare_schemas = compare_schemas
+        self.validate_target = validate_target
+        self.allow_mapping = allow_mapping
+        self.require_sample = require_sample
+
+    def run(self, context: ConnectionValidationContext) -> ConnectionValidationDecision:
+        stages: list[StageResult] = []
+        reasons: list[ReasonItem] = []
+
+        eligibility = self._eligibility(context)
+        stages.append(eligibility)
+        if eligibility.status != ConnectionValidationStageStatus.PASSED:
+            return self._halt(context, stages, reasons, eligibility)
+
+        format_result = self._format_check(context)
+        stages.append(format_result)
+        if format_result.status != ConnectionValidationStageStatus.PASSED:
+            return self._halt(context, stages, reasons, format_result)
+
+        comparison = self.compare_schemas(
+            context.source_schema.definition,
+            context.target_schema.definition,
+        )
+        schema_result, schema_reasons, schema_mapping_required = self._schema_check(comparison)
+        if (
+            schema_result.status != ConnectionValidationStageStatus.PASSED
+            and self.allow_mapping
+            and context.mapping is not None
+            and context.mapping.completeness == "FULL"
+        ):
+            schema_result = StageResult(
+                stage=ConnectionValidationStage.SCHEMA_CHECK,
+                status=ConnectionValidationStageStatus.PASSED,
+                message=(
+                    "Static schema conflicts require proof through the selected mapping "
+                    "and target validation."
+                ),
+                payload={
+                    **{
+                        key: value
+                        for key, value in schema_result.payload.items()
+                        if key != "reason_code"
+                    },
+                    "requires_mapping_proof": True,
+                },
+            )
+            schema_reasons = [
+                reason.model_copy(
+                    update={
+                        "severity": ReasonSeverity.WARNING,
+                        "details": {
+                            **reason.details,
+                            "requires_mapping_proof": True,
+                        },
+                    }
+                )
+                for reason in schema_reasons
+            ]
+            schema_mapping_required = True
+        stages.append(schema_result)
+        reasons.extend(schema_reasons)
+        if schema_result.status != ConnectionValidationStageStatus.PASSED:
+            return self._halt(context, stages, reasons, schema_result)
+
+        mapping_required = bool(
+            schema_mapping_required
+            or format_result.payload.get("requires_format_transform")
+        )
+
+        if self.allow_mapping:
+            mapping_result = self._mapping_check(context, mapping_required)
+            stages.append(mapping_result)
+            if mapping_result.status not in {
+                ConnectionValidationStageStatus.PASSED,
+                ConnectionValidationStageStatus.NOT_RUN,
+            }:
+                return self._halt(context, stages, reasons, mapping_result)
+
+        target_result, transformed_data, transform_execution = self._target_validation(
+            context,
+            mapping_required,
+        )
+        stages.append(target_result)
+        if target_result.status not in {
+            ConnectionValidationStageStatus.PASSED,
+            ConnectionValidationStageStatus.NOT_RUN,
+        }:
+            return self._halt(
+                context,
+                stages,
+                reasons,
+                target_result,
+                transformed_data=transformed_data,
+                transform_execution=transform_execution,
+            )
+
+        reason_code = "COMPATIBLE_WITH_MAPPING" if mapping_required else "DIRECTLY_COMPATIBLE"
+        reason = (
+            "Source output can be accepted by the target after applying the complete mapping."
+            if mapping_required
+            else "Source output directly satisfies the target input contract."
+        )
+        stages.append(
+            StageResult(
+                stage=ConnectionValidationStage.ACTIVATION_GATE,
+                status=ConnectionValidationStageStatus.PASSED,
+                message="All required connection validation gates passed.",
+            )
+        )
+        return ConnectionValidationDecision(
+            compatibility_level=(
+                CompatibilityLevel.COMPATIBLE_WITH_MAPPING
+                if mapping_required
+                else CompatibilityLevel.DIRECTLY_COMPATIBLE
+            ),
+            reason_code=reason_code,
+            reason=reason,
+            activation_allowed=True,
+            stages=stages,
+            business_rules_diagnostics=self._business_rules_diagnostics(context),
+            reasons=reasons,
+            transformed_data=transformed_data,
+            transform_execution=transform_execution,
+        )
+
+    def _eligibility(self, context: ConnectionValidationContext) -> StageResult:
+        if context.source.version_id == context.target.version_id:
+            return self._stage_failure(
+                ConnectionValidationStage.ELIGIBILITY,
+                "SOURCE_TARGET_SAME_VERSION",
+                "Source and target must be different versions.",
+            )
+        if context.source.status != "PUBLISHED":
+            return self._stage_failure(
+                ConnectionValidationStage.ELIGIBILITY,
+                "SOURCE_NOT_PUBLISHED",
+                "Source version is not published.",
+            )
+        if context.target.status != "PUBLISHED":
+            return self._stage_failure(
+                ConnectionValidationStage.ELIGIBILITY,
+                "TARGET_NOT_PUBLISHED",
+                "Target version is not published.",
+            )
+        if context.source_schema is None:
+            return self._stage_missing(
+                ConnectionValidationStage.ELIGIBILITY,
+                "SOURCE_OUTPUT_SCHEMA_MISSING",
+                "Source version has no OUTPUT schema.",
+            )
+        if context.target_schema is None:
+            return self._stage_missing(
+                ConnectionValidationStage.ELIGIBILITY,
+                "TARGET_INPUT_SCHEMA_MISSING",
+                "Target version has no INPUT schema.",
+            )
+        if context.source_schema.direction != "OUTPUT":
+            return self._stage_failure(
+                ConnectionValidationStage.ELIGIBILITY,
+                "INVALID_SOURCE_SCHEMA_DIRECTION",
+                "Source schema must have OUTPUT direction.",
+            )
+        if context.target_schema.direction != "INPUT":
+            return self._stage_failure(
+                ConnectionValidationStage.ELIGIBILITY,
+                "INVALID_TARGET_SCHEMA_DIRECTION",
+                "Target schema must have INPUT direction.",
+            )
+        return StageResult(
+            stage=ConnectionValidationStage.ELIGIBILITY,
+            status=ConnectionValidationStageStatus.PASSED,
+            message="The selected published versions satisfy OUTPUT to INPUT eligibility.",
+        )
+
+    def _format_check(self, context: ConnectionValidationContext) -> StageResult:
+        if not context.source.output_formats:
+            return self._stage_missing(
+                ConnectionValidationStage.FORMAT_CHECK,
+                "SOURCE_OUTPUT_FORMAT_MISSING",
+                "Source version does not declare an output format.",
+            )
+        if not context.target.input_formats:
+            return self._stage_missing(
+                ConnectionValidationStage.FORMAT_CHECK,
+                "TARGET_INPUT_FORMAT_MISSING",
+                "Target version does not declare an input format.",
+            )
+
+        alias_index = {alias.raw_value.strip().casefold(): alias for alias in context.aliases}
+        source_aliases, source_unknown = self._resolve_aliases(
+            context.source.output_formats,
+            alias_index,
+        )
+        target_aliases, target_unknown = self._resolve_aliases(
+            context.target.input_formats,
+            alias_index,
+        )
+
+        usable_source_aliases = [
+            alias for alias in source_aliases if not alias.is_terminal_output
+        ]
+        terminal = sorted(
+            alias.raw_value for alias in source_aliases if alias.is_terminal_output
+        )
+        source_tokens = {alias.normalized_value for alias in usable_source_aliases}
+        target_tokens = {alias.normalized_value for alias in target_aliases}
+        source_families = {alias.family for alias in usable_source_aliases}
+        target_families = {alias.family for alias in target_aliases}
+        diagnostics = {
+            "ignored_terminal_source_formats": terminal,
+            "unknown_source_formats": source_unknown,
+            "unknown_target_formats": target_unknown,
+        }
+        source_schema_format = context.source_schema.format.upper()
+        target_schema_format = context.target_schema.format.upper()
+        if source_tokens & target_tokens or source_families & target_families:
+            requires_schema_format_transform = (
+                source_schema_format != target_schema_format
+            )
+            if requires_schema_format_transform and not self.allow_mapping:
+                return self._stage_failure(
+                    ConnectionValidationStage.FORMAT_CHECK,
+                    "FORMAT_TRANSFORM_REQUIRED",
+                    "Source output requires a format transform before the target can accept it.",
+                    {
+                        "source_schema_format": source_schema_format,
+                        "target_schema_format": target_schema_format,
+                        **diagnostics,
+                    },
+                )
+            return StageResult(
+                stage=ConnectionValidationStage.FORMAT_CHECK,
+                status=ConnectionValidationStageStatus.PASSED,
+                message=(
+                    "Version formats overlap, but the selected schemas require a format transform."
+                    if requires_schema_format_transform
+                    else "Source and target formats overlap after normalization."
+                ),
+                payload={
+                    "requires_format_transform": requires_schema_format_transform,
+                    "source_schema_format": source_schema_format,
+                    "target_schema_format": target_schema_format,
+                    **diagnostics,
+                },
+            )
+
+        has_machine_readable_path = all(
+            any(
+                alias.family in MACHINE_READABLE_FORMAT_FAMILIES
+                for alias in aliases
+            )
+            for aliases in (usable_source_aliases, target_aliases)
+        )
+        if (
+            usable_source_aliases
+            and target_aliases
+            and has_machine_readable_path
+            and {source_schema_format, target_schema_format} <= SUPPORTED_SCHEMA_FORMATS
+        ):
+            if not self.allow_mapping:
+                return self._stage_failure(
+                    ConnectionValidationStage.FORMAT_CHECK,
+                    "FORMAT_MISMATCH",
+                    "Source output format is not directly accepted by the target input.",
+                    {
+                        "source_formats": sorted(source_tokens),
+                        "target_formats": sorted(target_tokens),
+                        **diagnostics,
+                    },
+                )
+            return StageResult(
+                stage=ConnectionValidationStage.FORMAT_CHECK,
+                status=ConnectionValidationStageStatus.PASSED,
+                message="Formats differ but the schema mapping engine supports this JSON/XML bridge.",
+                payload={"requires_format_transform": True, **diagnostics},
+            )
+        if source_unknown or target_unknown:
+            return self._stage_missing(
+                ConnectionValidationStage.FORMAT_CHECK,
+                "FORMAT_ALIAS_MISSING",
+                "No known compatible path exists and one or more formats have no normalization rule.",
+                diagnostics,
+            )
+        if terminal and not usable_source_aliases:
+            return self._stage_failure(
+                ConnectionValidationStage.FORMAT_CHECK,
+                "SOURCE_OUTPUT_IS_TERMINAL_REPORT",
+                "Source output is a terminal document or report and cannot feed another API.",
+                {"terminal_formats": terminal},
+            )
+        return self._stage_failure(
+            ConnectionValidationStage.FORMAT_CHECK,
+            "FORMAT_MISMATCH",
+            "Source output format cannot be consumed or transformed for the target input.",
+            {
+                "source_formats": sorted(source_tokens),
+                "target_formats": sorted(target_tokens),
+            },
+        )
+
+    def _schema_check(
+        self,
+        comparison: dict[str, Any],
+    ) -> tuple[StageResult, list[ReasonItem], bool]:
+        compatibility = comparison.get("compatibility")
+        raw_issues = comparison.get("issues") or []
+        reasons = [self._schema_reason(issue) for issue in raw_issues]
+        payload = {
+            "schema_compatibility": compatibility,
+            "summary": comparison.get("summary") or {},
+            "issues": [reason.model_dump(mode="json") for reason in reasons],
+        }
+        if compatibility == "directly_compatible":
+            return (
+                StageResult(
+                    stage=ConnectionValidationStage.SCHEMA_CHECK,
+                    status=ConnectionValidationStageStatus.PASSED,
+                    message="Source schema directly satisfies the target schema.",
+                    payload=payload,
+                ),
+                reasons,
+                False,
+            )
+        if compatibility == "compatible_with_mapping":
+            if not self.allow_mapping:
+                return (
+                    self._stage_failure(
+                        ConnectionValidationStage.SCHEMA_CHECK,
+                        "SCHEMA_NOT_DIRECTLY_COMPATIBLE",
+                        "Source output does not directly satisfy the target input schema.",
+                        payload,
+                    ),
+                    reasons,
+                    False,
+                )
+            return (
+                StageResult(
+                    stage=ConnectionValidationStage.SCHEMA_CHECK,
+                    status=ConnectionValidationStageStatus.PASSED,
+                    message="Schema differences are potentially resolvable through mapping.",
+                    payload=payload,
+                ),
+                reasons,
+                True,
+            )
+        return (
+            self._stage_failure(
+                ConnectionValidationStage.SCHEMA_CHECK,
+                "SCHEMA_INCOMPATIBLE",
+                "Source schema has blocking conflicts with the target schema.",
+                payload,
+            ),
+            reasons,
+            False,
+        )
+
+    def _mapping_check(
+        self,
+        context: ConnectionValidationContext,
+        mapping_required: bool,
+    ) -> StageResult:
+        if not mapping_required:
+            return StageResult(
+                stage=ConnectionValidationStage.MAPPING_CHECK,
+                status=ConnectionValidationStageStatus.NOT_RUN,
+                message="No mapping is required for directly compatible schemas.",
+            )
+        if context.mapping is None:
+            return self._stage_missing(
+                ConnectionValidationStage.MAPPING_CHECK,
+                "MAPPING_REQUIRED",
+                "A complete mapping is required before this pair can be activated.",
+            )
+        if context.mapping.completeness != "FULL":
+            return self._stage_missing(
+                ConnectionValidationStage.MAPPING_CHECK,
+                "MAPPING_INCOMPLETE",
+                "The selected mapping does not cover every required target field.",
+                {"mapping_id": context.mapping.mapping_id},
+            )
+        if context.mapping.lifecycle_status in {"FAILED", "STALE", "DEPRECATED"}:
+            return self._stage_failure(
+                ConnectionValidationStage.MAPPING_CHECK,
+                "MAPPING_NOT_USABLE",
+                "The selected mapping lifecycle state does not permit validation.",
+                {
+                    "mapping_id": context.mapping.mapping_id,
+                    "lifecycle_status": context.mapping.lifecycle_status,
+                },
+            )
+        return StageResult(
+            stage=ConnectionValidationStage.MAPPING_CHECK,
+            status=ConnectionValidationStageStatus.PASSED,
+            message="A complete mapping is available for the selected version pair.",
+            payload={"mapping_id": context.mapping.mapping_id},
+        )
+
+    def _target_validation(
+        self,
+        context: ConnectionValidationContext,
+        mapping_required: bool,
+    ) -> tuple[StageResult, dict[str, Any] | None, TransformExecution | None]:
+        if context.sample_data is None:
+            if not self.require_sample:
+                return (
+                    StageResult(
+                        stage=ConnectionValidationStage.TARGET_VALIDATION,
+                        status=ConnectionValidationStageStatus.NOT_RUN,
+                        message="No sample payload was supplied; static compatibility checks were used.",
+                    ),
+                    None,
+                    None,
+                )
+            return (
+                self._stage_missing(
+                    ConnectionValidationStage.TARGET_VALIDATION,
+                    "SAMPLE_DATA_MISSING",
+                    "Sample source output is required for target acceptance validation.",
+                ),
+                None,
+                None,
+            )
+        source_valid, source_error = self.validate_target(
+            context.sample_data,
+            context.source_schema.definition,
+        )
+        if not source_valid:
+            return (
+                self._stage_failure(
+                    ConnectionValidationStage.TARGET_VALIDATION,
+                    "SOURCE_VALIDATION_FAILED",
+                    source_error
+                    or "Sample output does not satisfy the source output schema.",
+                    {"validation_scope": "SOURCE"},
+                ),
+                None,
+                None,
+            )
+
+        transformed = context.sample_data
+        if mapping_required:
+            try:
+                transformed = context.mapping.transform(context.sample_data)
+            except Exception as exc:
+                error = str(exc)
+                return (
+                    self._stage_failure(
+                        ConnectionValidationStage.TARGET_VALIDATION,
+                        "TRANSFORM_FAILED",
+                        "The mapping could not transform the sample source output.",
+                        {"error": error},
+                    ),
+                    None,
+                    TransformExecution(
+                        output_format=context.target_schema.format.upper(),
+                        success=False,
+                        error_message=error,
+                    ),
+                )
+
+        transform_execution = self._materialize_transform(
+            context,
+            transformed,
+            mapping_required,
+        )
+        if transform_execution is not None and not transform_execution.success:
+            return (
+                self._stage_failure(
+                    ConnectionValidationStage.TARGET_VALIDATION,
+                    "TRANSFORM_FAILED",
+                    "The transformed payload could not be materialized in the target format.",
+                    {"error": transform_execution.error_message},
+                ),
+                transformed,
+                transform_execution,
+            )
+
+        valid, error = self.validate_target(transformed, context.target_schema.definition)
+        if not valid:
+            if transform_execution is not None:
+                transform_execution = TransformExecution(
+                    output_format=transform_execution.output_format,
+                    success=False,
+                    output_data=transform_execution.output_data,
+                    output_text=transform_execution.output_text,
+                    error_message=error,
+                )
+            return (
+                self._stage_failure(
+                    ConnectionValidationStage.TARGET_VALIDATION,
+                    "TARGET_VALIDATION_FAILED",
+                    error or "Transformed output does not satisfy the target input schema.",
+                ),
+                transformed,
+                transform_execution,
+            )
+        return (
+            StageResult(
+                stage=ConnectionValidationStage.TARGET_VALIDATION,
+                status=ConnectionValidationStageStatus.PASSED,
+                message="The resulting payload satisfies the target input schema.",
+                payload={"validation_scope": "SOURCE_AND_TARGET"},
+            ),
+            transformed,
+            transform_execution,
+        )
+
+    @staticmethod
+    def _materialize_transform(
+        context: ConnectionValidationContext,
+        transformed: dict[str, Any],
+        mapping_required: bool,
+    ) -> TransformExecution | None:
+        if not mapping_required:
+            return None
+        output_format = context.target_schema.format.upper()
+        try:
+            return TransformExecution(
+                output_format=output_format,
+                success=True,
+                output_data=transformed if output_format == "JSON" else None,
+                output_text=(
+                    serialize_to_xml(
+                        transformed,
+                        root_tag=context.target_schema.root_path,
+                    )
+                    if output_format == "XML"
+                    else None
+                ),
+            )
+        except Exception as exc:
+            return TransformExecution(
+                output_format=output_format,
+                success=False,
+                output_data=transformed,
+                error_message=str(exc),
+            )
+
+    def _halt(
+        self,
+        context: ConnectionValidationContext,
+        stages: list[StageResult],
+        reasons: list[ReasonItem],
+        blocker: StageResult,
+        *,
+        transformed_data: dict[str, Any] | None = None,
+        transform_execution: TransformExecution | None = None,
+    ) -> ConnectionValidationDecision:
+        completed = {result.stage for result in stages}
+        stage_order = [
+            stage
+            for stage in STAGE_ORDER
+            if self.allow_mapping or stage != ConnectionValidationStage.MAPPING_CHECK
+        ]
+        for stage in stage_order:
+            if stage not in completed:
+                stages.append(
+                    StageResult(
+                        stage=stage,
+                        status=ConnectionValidationStageStatus.NOT_RUN,
+                        message="Skipped because an earlier validation gate did not pass.",
+                    )
+                )
+        severity = (
+            ReasonSeverity.WARNING
+            if blocker.status == ConnectionValidationStageStatus.MISSING_INFORMATION
+            else ReasonSeverity.ERROR
+        )
+        reasons.append(
+            ReasonItem(
+                reason_code=blocker.payload["reason_code"],
+                stage=blocker.stage,
+                severity=severity,
+                message=blocker.message,
+                details={
+                    key: value
+                    for key, value in blocker.payload.items()
+                    if key != "reason_code"
+                },
+            )
+        )
+        level = (
+            CompatibilityLevel.NOT_ASSESSABLE
+            if blocker.status == ConnectionValidationStageStatus.MISSING_INFORMATION
+            else CompatibilityLevel.INCOMPATIBLE
+        )
+        return ConnectionValidationDecision(
+            compatibility_level=level,
+            reason_code=blocker.payload["reason_code"],
+            reason=blocker.message,
+            activation_allowed=False,
+            stages=stages,
+            business_rules_diagnostics=self._business_rules_diagnostics(context),
+            reasons=reasons,
+            transformed_data=transformed_data,
+            transform_execution=transform_execution,
+        )
+
+    @staticmethod
+    def _business_rules_diagnostics(
+        context: ConnectionValidationContext,
+    ) -> dict[str, Any]:
+        # Diagnostic only: business rules never affect compatibility or activation.
+        source_rules = {
+            rule.strip() for rule in context.source.business_rules if rule.strip()
+        }
+        target_rules = {
+            rule.strip() for rule in context.target.business_rules if rule.strip()
+        }
+        return {
+            "source_business_rules": sorted(source_rules),
+            "target_business_rules": sorted(target_rules),
+            "overlapping_rules": sorted(source_rules & target_rules),
+            "disjoint_rules": sorted(source_rules ^ target_rules),
+        }
+
+    @staticmethod
+    def _resolve_aliases(
+        values: list[str],
+        alias_index: dict[str, FormatAlias],
+    ) -> tuple[list[FormatAlias], list[str]]:
+        resolved: list[FormatAlias] = []
+        unknown: list[str] = []
+        for value in values:
+            alias = alias_index.get(value.strip().casefold())
+            if alias is None:
+                unknown.append(value)
+            else:
+                resolved.append(alias)
+        return resolved, unknown
+
+    @staticmethod
+    def _schema_reason(issue: dict[str, Any]) -> ReasonItem:
+        code = re.sub(r"[^A-Z0-9]+", "_", str(issue.get("code", "SCHEMA_ISSUE")).upper()).strip("_")
+        severity = {
+            "error": ReasonSeverity.ERROR,
+            "warning": ReasonSeverity.WARNING,
+        }.get(str(issue.get("severity", "")).lower(), ReasonSeverity.INFO)
+        return ReasonItem(
+            reason_code=code or "SCHEMA_ISSUE",
+            stage=ConnectionValidationStage.SCHEMA_CHECK,
+            severity=severity,
+            source_path=issue.get("source_path"),
+            target_path=issue.get("target_path"),
+            message=issue.get("message") or "Schema compatibility issue.",
+            details={"kind": issue.get("kind"), "suggestion": issue.get("suggestion")},
+        )
+
+    @staticmethod
+    def _stage_failure(
+        stage: ConnectionValidationStage,
+        reason_code: str,
+        message: str,
+        payload: dict[str, Any] | None = None,
+    ) -> StageResult:
+        return StageResult(
+            stage=stage,
+            status=ConnectionValidationStageStatus.FAILED,
+            message=message,
+            payload={"reason_code": reason_code, **(payload or {})},
+        )
+
+    @staticmethod
+    def _stage_missing(
+        stage: ConnectionValidationStage,
+        reason_code: str,
+        message: str,
+        payload: dict[str, Any] | None = None,
+    ) -> StageResult:
+        return StageResult(
+            stage=stage,
+            status=ConnectionValidationStageStatus.MISSING_INFORMATION,
+            message=message,
+            payload={"reason_code": reason_code, **(payload or {})},
+        )

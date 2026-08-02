@@ -1,0 +1,38 @@
+from enum import Enum
+
+
+class CompatibilityLevel(str, Enum):
+    DIRECTLY_COMPATIBLE = "DIRECTLY_COMPATIBLE"
+    COMPATIBLE_WITH_MAPPING = "COMPATIBLE_WITH_MAPPING"
+    INCOMPATIBLE = "INCOMPATIBLE"
+    NOT_ASSESSABLE = "NOT_ASSESSABLE"
+
+
+class ConnectionValidationStage(str, Enum):
+    ELIGIBILITY = "ELIGIBILITY"
+    FORMAT_CHECK = "FORMAT_CHECK"
+    SCHEMA_CHECK = "SCHEMA_CHECK"
+    MAPPING_CHECK = "MAPPING_CHECK"
+    TARGET_VALIDATION = "TARGET_VALIDATION"
+    ACTIVATION_GATE = "ACTIVATION_GATE"
+
+
+class ConnectionValidationStageStatus(str, Enum):
+    RUNNING = "RUNNING"
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    NOT_RUN = "NOT_RUN"
+    MISSING_INFORMATION = "MISSING_INFORMATION"
+
+
+class ConnectionValidationTrigger(str, Enum):
+    MANUAL = "MANUAL"
+    VERSION_CHANGED = "VERSION_CHANGED"
+    MAPPING_UPDATED = "MAPPING_UPDATED"
+    RETRY = "RETRY"
+
+
+class ReasonSeverity(str, Enum):
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"

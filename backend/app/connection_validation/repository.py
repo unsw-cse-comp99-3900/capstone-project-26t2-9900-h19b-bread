@@ -1,0 +1,75 @@
+from __future__ import annotations
+
+from typing import Protocol
+
+from app.connection_validation.schemas import (
+    ConnectionValidationContext,
+    ConnectionValidationDecision,
+    ConnectionValidationRequest,
+    EndpointVersion,
+    FormatAlias,
+    PayloadSchema,
+    PersistedDecision,
+)
+
+
+class ConnectionValidationNotFoundError(LookupError):
+    def __init__(self, message: str, reason_code: str = "RESOURCE_NOT_FOUND") -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
+class ConnectionValidationConflictError(ValueError):
+    pass
+
+
+class ConnectionValidationPermissionError(PermissionError):
+    pass
+
+
+class ConnectionValidationRepository(Protocol):
+    def get_version(self, api_id: int, version_id: int) -> EndpointVersion | None:
+        ...
+
+    def get_schema(
+        self,
+        api_id: int,
+        version_id: int,
+        direction: str,
+        schema_id: int | None = None,
+    ) -> PayloadSchema | None:
+        ...
+
+    def list_format_aliases(self) -> list[FormatAlias]:
+        ...
+
+    def assert_actor_can_validate(
+        self,
+        source_api_id: int,
+        target_api_id: int,
+        enterprise_id: int,
+        is_admin: bool,
+    ) -> None:
+        ...
+
+    def create_run(
+        self,
+        request: ConnectionValidationRequest,
+        created_by: int,
+    ) -> int:
+        ...
+
+    def get_run(self, run_id: int) -> dict | None:
+        ...
+
+    def save_decision(
+        self,
+        run_id: int,
+        request: ConnectionValidationRequest,
+        context: ConnectionValidationContext,
+        decision: ConnectionValidationDecision,
+    ) -> PersistedDecision:
+        ...
+
+    def cancel_run(self, run_id: int) -> None:
+        ...

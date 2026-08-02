@@ -4,7 +4,7 @@ import { message } from 'antd';
 
 interface ApiError {
   error?:      string;
-  detail?:     string;
+  detail?:     string | { reason_code?: string; message?: string };
   message?:    string;
   statusCode?: number;
 }
@@ -41,7 +41,9 @@ request.interceptors.response.use(
         return Promise.reject(data);
       }
 
-      const errorMessage = data?.detail ?? data?.error ?? data?.message ?? 'An error occurred';
+      const errorMessage = typeof data?.detail === 'object'
+        ? data.detail.message ?? data.detail.reason_code ?? 'An error occurred'
+        : data?.detail ?? data?.error ?? data?.message ?? 'An error occurred';
       message.error(errorMessage, 3);
       return Promise.reject(data);
     }

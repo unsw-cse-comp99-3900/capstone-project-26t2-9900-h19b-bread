@@ -1,0 +1,23 @@
+{
+  "ID": "val-20240315-001",
+  "type": "validation",
+  "event": {
+    "time": "2024-03-15T09:23:47Z",
+    "actor": "user:jsmith",
+    "agent": "validation-service-v2.1",
+    "trigger": "on_submit"
+  },
+  "rules": {
+    "language": "jsonpath",
+    "expression": "$.patient.age >= 18 && $.patient.consentSigned == true",
+    "severity": "error",
+    "change": "up",
+    "description": "Patient must be an adult and have signed consent before proceeding."
+  },
+  "data": {
+    "source": ["patient.age", "patient.consentSigned"],
+    "target": ["enrollment.eligibility"],
+    "description": "Checks adult eligibility and consent status for trial enrollment."
+  },
+  "value": "1"
+}
