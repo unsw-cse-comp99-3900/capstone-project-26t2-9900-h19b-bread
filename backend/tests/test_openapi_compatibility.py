@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from app.schemas.validation_schema import Protocol, ValidationRequest, ValidationStatus
 from app.services.validation_service import validate_specification
 
@@ -102,3 +104,53 @@ def test_non_null_structural_error_is_not_ignored():
 
     assert result.overall_status == ValidationStatus.FAIL
     assert any(error.code == "OPENAPI_INVALID_STRUCTURE" for error in result.errors)
+
+
+@pytest.mark.parametrize(
+    ("schema_type", "invalid_default", "expected_message"),
+    [
+        ("number", "nulll", "'nulll' is not of type 'number'"),
+        ("boolean", "not-a-boolean", "'not-a-boolean' is not of type 'boolean'"),
+        ("string", [], "[] is not of type 'string'"),
+    ],
+)
+def test_reports_remaining_default_type_error_after_ignoring_legacy_null_defaults(
+    schema_type: str, invalid_default: object, expected_message: str
+):
+    spec = _valid_invoice_spec()
+    schemas = spec["components"].setdefault("schemas", {})
+    schemas["LegacyDefaults"] = {"type": "object", "properties": {}}
+    properties = schemas["LegacyDefaults"]["properties"]
+    properties["optionalItems"] = {"type": "array", "default": "null"}
+    properties["invalidDefault"] = {
+        "type": schema_type,
+        "default": invalid_default,
+    }
+
+    result = validate_specification(_request(spec))
+
+    structure_error = next(
+        error for error in result.errors if error.code == "OPENAPI_INVALID_STRUCTURE"
+    )
+    assert result.overall_status == ValidationStatus.FAIL
+    assert expected_message in structure_error.message
+    assert "'null' is not of type 'array'" not in structure_error.message
+
+
+def test_reports_remaining_schema_error_after_ignoring_legacy_null_defaults():
+    spec = _valid_invoice_spec()
+    schemas = spec["components"].setdefault("schemas", {})
+    schemas["LegacyDefaults"] = {
+        "type": "object",
+        "properties": {"optionalItems": {"type": "array", "default": "null"}},
+    }
+    schemas["InvalidSchema"] = {"type": "not-a-json-schema-type"}
+
+    result = validate_specification(_request(spec))
+
+    structure_error = next(
+        error for error in result.errors if error.code == "OPENAPI_INVALID_STRUCTURE"
+    )
+    assert result.overall_status == ValidationStatus.FAIL
+    assert "not-a-json-schema-type" in structure_error.message
+    assert "'null' is not of type 'array'" not in structure_error.message

@@ -423,11 +423,11 @@ def _run_specification_stage(
             if normalized_paths:
                 try:
                     validate_spec(compatibility_spec)
-                except OpenAPIValidationError:
+                except OpenAPIValidationError as compatibility_exc:
                     errors.append(
                         ValidationErrorDetail(
                             code="OPENAPI_INVALID_STRUCTURE",
-                            message=str(exc),
+                            message=str(compatibility_exc),
                             path=None,
                             stage=ValidationStage.SPECIFICATION_VALIDATION,
                         )
