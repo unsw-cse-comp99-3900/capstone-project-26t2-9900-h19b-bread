@@ -1,5 +1,6 @@
 import { apiGet, apiPost, apiPut } from "../utils/request";
 import request from "../utils/request";
+import { parse as parseYaml } from "yaml";
 
 export interface VersionSummary {
   version_id: number;
@@ -269,10 +270,12 @@ export function detectSpecType(
     return "WSDL";
   }
   try {
-    const obj = JSON.parse(trimmed) as { swagger?: string; openapi?: string };
-    if (obj.swagger) return "SWAGGER";
+    const obj = (trimmed.startsWith("{")
+      ? JSON.parse(trimmed)
+      : parseYaml(trimmed)) as { swagger?: string; openapi?: string };
+    if (obj?.swagger) return "SWAGGER";
   } catch {
-    // not JSON
+    // Not a readable OpenAPI JSON/YAML document; validation will report why.
   }
   return "OPENAPI";
 }
