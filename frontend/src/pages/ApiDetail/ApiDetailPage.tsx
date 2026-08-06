@@ -35,6 +35,7 @@ import APIInfoForm from '../../components/APIInfoForm';
 import type { RootState } from '../../store';
 import type { ApiHistoryItem, ApiRecord, ApiStatus } from '../../types/api';
 import { mapStatus } from '../../types/api';
+import { summarizeApiDescription } from '../../utils/helper';
 import { getApiStatus, withdrawApi } from '../../services/lifecycle';
 import { getSubmissions, type SubmissionListItem } from '../../services/submission';
 import {
@@ -112,7 +113,7 @@ function detailToRecord(
     creator:      listItem?.submitted_by_name?.trim()
       || (listItem ? `user #${listItem.submitted_by}` : `user #${detail.created_by}`),
     creatorId:    String(listItem?.submitted_by ?? detail.created_by),
-    description:  detail.description ?? 'No description provided.',
+    description:  summarizeApiDescription(detail.description) ?? 'No description provided.',
     inputFormat:  detail.input_format ?? '—',
     outputFormat: detail.output_format ?? '—',
     createdAt:    listItem?.created_at ?? detail.created_at,

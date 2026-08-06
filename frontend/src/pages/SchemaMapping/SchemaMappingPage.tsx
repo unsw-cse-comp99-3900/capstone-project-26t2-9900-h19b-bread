@@ -75,6 +75,43 @@ const stageColor = (status: ConnectionValidationStageStatus): string => {
 const hasDirection = (direction: string, expected: "INPUT" | "OUTPUT") =>
   direction.toUpperCase() === expected;
 
+const TECHNICAL_ENDPOINT_SEGMENTS = new Set([
+  "auth",
+  "callback",
+  "callbacks",
+  "connectivity",
+  "count",
+  "counts",
+  "health",
+  "healthcheck",
+  "login",
+  "logout",
+  "metrics",
+  "oauth",
+  "oauth2",
+  "openapi",
+  "ping",
+  "setting",
+  "settings",
+  "status",
+  "swagger",
+  "token",
+  "tokens",
+  "tool",
+  "tools",
+  "version",
+  "versions",
+  "webhook",
+  "webhooks",
+  "web_hooks",
+]);
+
+const isTechnicalEndpointSchema = (schema: ApiSchemaSummary) => {
+  const endpoint = schema.source_path ?? schema.source_key;
+  const pathSegments = endpoint.toLowerCase().match(/[a-z0-9_]+/g) ?? [];
+  return pathSegments.some((segment) => TECHNICAL_ENDPOINT_SEGMENTS.has(segment));
+};
+
 const SchemaMappingPage: React.FC = () => {
   const navigate = useNavigate();
   const { id: apiId } = useParams<{ id?: string }>();
@@ -161,9 +198,14 @@ const SchemaMappingPage: React.FC = () => {
     }));
   }, [dbComparison]);
 
+  const businessSchemas = useMemo(
+    () => apiSchemas.filter((schema) => !isTechnicalEndpointSchema(schema)),
+    [apiSchemas],
+  );
+
   const schemaOptions = useMemo(
     () =>
-      apiSchemas.map((schema) => {
+      businessSchemas.map((schema) => {
         const operation = [schema.source_method, schema.source_path]
           .filter(Boolean)
           .join(" ");
@@ -175,16 +217,16 @@ const SchemaMappingPage: React.FC = () => {
           label: `${schema.api_name} · ${schema.direction}${response} ${media} · ${source} · ${schema.version_number}`,
         };
       }),
-    [apiSchemas],
+    [businessSchemas],
   );
 
   const sourceSchemaOptions = useMemo(
-    () => schemaOptions.filter((option) => hasDirection(apiSchemas.find((schema) => schema.schema_id === option.value)?.direction ?? "", "OUTPUT")),
-    [apiSchemas, schemaOptions],
+    () => schemaOptions.filter((option) => hasDirection(businessSchemas.find((schema) => schema.schema_id === option.value)?.direction ?? "", "OUTPUT")),
+    [businessSchemas, schemaOptions],
   );
   const targetSchemaOptions = useMemo(
-    () => schemaOptions.filter((option) => hasDirection(apiSchemas.find((schema) => schema.schema_id === option.value)?.direction ?? "", "INPUT")),
-    [apiSchemas, schemaOptions],
+    () => schemaOptions.filter((option) => hasDirection(businessSchemas.find((schema) => schema.schema_id === option.value)?.direction ?? "", "INPUT")),
+    [businessSchemas, schemaOptions],
   );
 
   const validationSourceSchema = useMemo(
