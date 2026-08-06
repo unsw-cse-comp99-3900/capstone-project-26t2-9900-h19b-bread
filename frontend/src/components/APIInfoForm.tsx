@@ -32,7 +32,7 @@ import {
   FORMAT_OPTIONS,
   AUTH_OPTIONS,
   CATEGORY_OPTIONS,
-  parseOpenApiJson,
+  parseOpenApiText,
   parseWsdl,
 } from "../utils/helper";
 import {
@@ -396,11 +396,7 @@ const APIInfoForm: React.FC<Props> = ({
       const text = e.target?.result as string;
       setSpecContent(text);
       try {
-        if (file.name.endsWith(".json")) {
-          applyParsed(
-            parseOpenApiJson(JSON.parse(text) as Record<string, unknown>),
-          );
-        } else if (
+        if (
           file.name.endsWith(".wsdl") ||
           (file.name.endsWith(".xml") && text.includes("wsdl"))
         ) {
@@ -408,9 +404,7 @@ const APIInfoForm: React.FC<Props> = ({
             parseWsdl(new DOMParser().parseFromString(text, "text/xml")),
           );
         } else {
-          setParseError(
-            "Auto-parse is not available for YAML files. Fields have been left empty — please fill in manually.",
-          );
+          applyParsed(parseOpenApiText(text));
         }
       } catch {
         setParseError(
@@ -634,17 +628,12 @@ const APIInfoForm: React.FC<Props> = ({
           const text = await response.text();
           setSpecContent(text);
           try {
-            if (
-              urlValue.toLowerCase().endsWith(".json") ||
-              text.trim().startsWith("{")
-            ) {
-              applyParsed(
-                parseOpenApiJson(JSON.parse(text) as Record<string, unknown>),
-              );
-            } else {
+            if (protocol === "SOAP" || text.trim().startsWith("<")) {
               applyParsed(
                 parseWsdl(new DOMParser().parseFromString(text, "text/xml")),
               );
+            } else {
+              applyParsed(parseOpenApiText(text));
             }
           } catch {
             setParseError(

@@ -92,6 +92,43 @@ const stageColor = (status: ConnectionValidationStageStatus): string => {
 const hasDirection = (direction: string, expected: "INPUT" | "OUTPUT") =>
   direction.toUpperCase() === expected;
 
+const TECHNICAL_ENDPOINT_SEGMENTS = new Set([
+  "auth",
+  "callback",
+  "callbacks",
+  "connectivity",
+  "count",
+  "counts",
+  "health",
+  "healthcheck",
+  "login",
+  "logout",
+  "metrics",
+  "oauth",
+  "oauth2",
+  "openapi",
+  "ping",
+  "setting",
+  "settings",
+  "status",
+  "swagger",
+  "token",
+  "tokens",
+  "tool",
+  "tools",
+  "version",
+  "versions",
+  "webhook",
+  "webhooks",
+  "web_hooks",
+]);
+
+const isTechnicalEndpointSchema = (schema: ApiSchemaSummary) => {
+  const endpoint = schema.source_path ?? schema.source_key;
+  const pathSegments = endpoint.toLowerCase().match(/[a-z0-9_]+/g) ?? [];
+  return pathSegments.some((segment) => TECHNICAL_ENDPOINT_SEGMENTS.has(segment));
+};
+
 const SchemaMappingPage: React.FC = () => {
   const navigate = useNavigate();
   const { id: apiId } = useParams<{ id?: string }>();
@@ -149,21 +186,28 @@ const SchemaMappingPage: React.FC = () => {
     try {
       const schemas = await listApiSchemas();
       setApiSchemas(schemas);
-      const outputSchema = schemas.find((schema) => hasDirection(schema.direction, "OUTPUT"));
-      const inputSchema = schemas.find((schema) => hasDirection(schema.direction, "INPUT"));
-      const currentValidationSource = schemas.find((schema) => schema.schema_id === validationSourceSchemaId);
-      const currentValidationTarget = schemas.find((schema) => schema.schema_id === validationTargetSchemaId);
-      if (schemas.length > 0 && sourceSchemaId == null) {
-        setSourceSchemaId(schemas[0].schema_id);
+      const businessSchemas = schemas.filter((schema) => !isTechnicalEndpointSchema(schema));
+      const outputSchema = businessSchemas.find((schema) => hasDirection(schema.direction, "OUTPUT"));
+      const inputSchema = businessSchemas.find((schema) => hasDirection(schema.direction, "INPUT"));
+      const currentSource = businessSchemas.find((schema) => schema.schema_id === sourceSchemaId);
+      const currentTarget = businessSchemas.find((schema) => schema.schema_id === targetSchemaId);
+      const currentValidationSource = businessSchemas.find((schema) => schema.schema_id === validationSourceSchemaId);
+      const currentValidationTarget = businessSchemas.find((schema) => schema.schema_id === validationTargetSchemaId);
+      if (!currentSource) {
+        setSourceSchemaId(businessSchemas[0]?.schema_id ?? null);
       }
-      if (schemas.length > 1 && targetSchemaId == null) {
-        setTargetSchemaId(schemas[1].schema_id);
+      if (!currentTarget) {
+        setTargetSchemaId(businessSchemas[1]?.schema_id ?? null);
       }
       if (outputSchema && (!currentValidationSource || !hasDirection(currentValidationSource.direction, "OUTPUT"))) {
         setValidationSourceSchemaId(outputSchema.schema_id);
+      } else if (!outputSchema) {
+        setValidationSourceSchemaId(null);
       }
       if (inputSchema && (!currentValidationTarget || !hasDirection(currentValidationTarget.direction, "INPUT"))) {
         setValidationTargetSchemaId(inputSchema.schema_id);
+      } else if (!inputSchema) {
+        setValidationTargetSchemaId(null);
       }
     } finally {
       setDbLoading(false);
@@ -207,9 +251,14 @@ const SchemaMappingPage: React.FC = () => {
     }));
   }, [dbComparison]);
 
+  const businessSchemas = useMemo(
+    () => apiSchemas.filter((schema) => !isTechnicalEndpointSchema(schema)),
+    [apiSchemas],
+  );
+
   const schemaOptions = useMemo(
     () =>
-      apiSchemas.map((schema) => {
+      businessSchemas.map((schema) => {
         const operation = [schema.source_method, schema.source_path]
           .filter(Boolean)
           .join(" ");
@@ -221,16 +270,16 @@ const SchemaMappingPage: React.FC = () => {
           label: `${schema.api_name} · ${schema.direction}${response} ${media} · ${source} · ${schema.version_number} (#${schema.schema_id})`,
         };
       }),
-    [apiSchemas],
+    [businessSchemas],
   );
 
   const sourceSchemaOptions = useMemo(
-    () => schemaOptions.filter((option) => hasDirection(apiSchemas.find((schema) => schema.schema_id === option.value)?.direction ?? "", "OUTPUT")),
-    [apiSchemas, schemaOptions],
+    () => schemaOptions.filter((option) => hasDirection(businessSchemas.find((schema) => schema.schema_id === option.value)?.direction ?? "", "OUTPUT")),
+    [businessSchemas, schemaOptions],
   );
   const targetSchemaOptions = useMemo(
-    () => schemaOptions.filter((option) => hasDirection(apiSchemas.find((schema) => schema.schema_id === option.value)?.direction ?? "", "INPUT")),
-    [apiSchemas, schemaOptions],
+    () => schemaOptions.filter((option) => hasDirection(businessSchemas.find((schema) => schema.schema_id === option.value)?.direction ?? "", "INPUT")),
+    [businessSchemas, schemaOptions],
   );
 
   const validationSourceSchema = useMemo(

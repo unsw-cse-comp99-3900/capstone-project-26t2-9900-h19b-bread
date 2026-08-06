@@ -1,5 +1,6 @@
 import xml.etree.ElementTree as ET
-from typing import List, Optional, Tuple
+from copy import deepcopy
+from typing import Any, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from openapi_spec_validator import validate_spec
@@ -33,6 +34,36 @@ def _tag_errors(
 def _has_blocking(errors: List[ValidationErrorDetail]) -> bool:
     """True if any error is blocking (severity != 'warning'). Warnings don't fail a stage."""
     return any(error.severity != "warning" for error in errors)
+
+
+def _without_legacy_null_defaults(spec: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Return a validation-only copy without common generator placeholder defaults.
+
+    Some OpenAPI 3.0 generators emit ``default: null`` (or the string
+    ``"null"``) for optional fields. Those values are invalid for primitive
+    schemas in OpenAPI 3.0, despite the API otherwise being usable. The raw
+    uploaded specification is never altered or persisted from this copy.
+    """
+    normalized = deepcopy(spec)
+    paths: list[str] = []
+
+    def walk(value: Any, path: str) -> None:
+        if isinstance(value, dict):
+            default = value.get("default", object())
+            if default is None or (
+                isinstance(default, str) and default.strip().lower() == "null"
+            ):
+                value.pop("default", None)
+                paths.append(path or "$")
+            for key, child in value.items():
+                child_path = f"{path}.{key}" if path else str(key)
+                walk(child, child_path)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                walk(child, f"{path}[{index}]")
+
+    walk(normalized, "")
+    return normalized, paths
 
 
 def _local_tag(tag: object) -> str:
@@ -384,17 +415,49 @@ def _run_specification_stage(
         if spec_dict is None:
             return ValidationStatus.FAIL, errors, None
 
+        validation_spec = spec_dict
         try:
             validate_spec(spec_dict)
         except OpenAPIValidationError as exc:
-            errors.append(
-                ValidationErrorDetail(
-                    code="OPENAPI_INVALID_STRUCTURE",
-                    message=str(exc),
-                    path=None,
-                    stage=ValidationStage.SPECIFICATION_VALIDATION,
+            compatibility_spec, normalized_paths = _without_legacy_null_defaults(spec_dict)
+            if normalized_paths:
+                try:
+                    validate_spec(compatibility_spec)
+                except OpenAPIValidationError as compatibility_exc:
+                    errors.append(
+                        ValidationErrorDetail(
+                            code="OPENAPI_INVALID_STRUCTURE",
+                            message=str(compatibility_exc),
+                            path=None,
+                            stage=ValidationStage.SPECIFICATION_VALIDATION,
+                        )
+                    )
+                else:
+                    validation_spec = compatibility_spec
+                    preview = ", ".join(normalized_paths[:3])
+                    suffix = "" if len(normalized_paths) <= 3 else ", ..."
+                    errors.append(
+                        ValidationErrorDetail(
+                            code="OPENAPI_LEGACY_NULL_DEFAULT_IGNORED",
+                            message=(
+                                f"Ignored {len(normalized_paths)} legacy null default value(s) "
+                                f"during structural validation ({preview}{suffix}). "
+                                "The uploaded specification was not changed."
+                            ),
+                            path=normalized_paths[0],
+                            severity="warning",
+                            stage=ValidationStage.SPECIFICATION_VALIDATION,
+                        )
+                    )
+            else:
+                errors.append(
+                    ValidationErrorDetail(
+                        code="OPENAPI_INVALID_STRUCTURE",
+                        message=str(exc),
+                        path=None,
+                        stage=ValidationStage.SPECIFICATION_VALIDATION,
+                    )
                 )
-            )
         except Exception as exc:
             errors.append(
                 ValidationErrorDetail(
@@ -406,11 +469,11 @@ def _run_specification_stage(
             )
 
         # FR-3 metadata consistency (endpoint / formats) only if structurally sound.
-        if not errors:
-            errors.extend(_check_rest_metadata(request, spec_dict))
+        if not _has_blocking(errors):
+            errors.extend(_check_rest_metadata(request, validation_spec))
 
         status = ValidationStatus.FAIL if _has_blocking(errors) else ValidationStatus.PASS
-        return status, errors, spec_dict
+        return status, errors, validation_spec
 
     if request.protocol == Protocol.SOAP:
         xml_root, parse_errors = parse_wsdl(request.spec_content)

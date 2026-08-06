@@ -1,3 +1,5 @@
+import { parse as parseYaml } from "yaml";
+
 // ── Shared types ───────────────────────────────────────────────────────────
 
 export type Protocol = "REST" | "SOAP";
@@ -23,6 +25,47 @@ export interface ValidationResult {
   specValidation: StageResult;
   domainCompliance: StageResult;
   securityMetadata: StageResult;
+}
+
+const AUTO_DESCRIPTION_LIMIT = 360;
+
+/**
+ * OpenAPI info.description is often a provider's full integration guide, not
+ * the short catalogue description required by this application. The original
+ * document is kept intact; this derives a concise, editable summary instead.
+ */
+export function summarizeApiDescription(
+  value: unknown,
+  limit = AUTO_DESCRIPTION_LIMIT,
+): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+
+  const cleanParagraph = (paragraph: string) =>
+    paragraph
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/`([^`]*)`/g, "$1")
+      .replace(/^\s{0,3}[#>]+\s?/gm, "")
+      .replace(/[*_~]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const paragraphs = value
+    .split(/\r?\n\s*\r?\n/)
+    .map(cleanParagraph)
+    .filter(Boolean);
+  const summary =
+    paragraphs.find(
+      (paragraph) =>
+        paragraph.replace(/[^\p{L}\p{N}]/gu, "").length >= 40,
+    ) ??
+    paragraphs[0] ??
+    cleanParagraph(value);
+
+  if (summary.length <= limit) return summary;
+  const cutAt = summary.lastIndexOf(" ", limit);
+  return `${summary.slice(0, cutAt > 80 ? cutAt : limit).trim()}…`;
 }
 
 // ── Domain constants ────────────────────────────────────────────────────────
@@ -51,7 +94,7 @@ export const CATEGORY_OPTIONS = [
 
 // ── Spec parsers ───────────────────────────────────────────────────────────
 
-export function parseOpenApiJson(obj: Record<string, unknown>): ParsedInfo {
+export function parseOpenApiDocument(obj: Record<string, unknown>): ParsedInfo {
   const info = (obj.info as Record<string, unknown>) ?? {};
   const servers = ((obj.servers as unknown[]) ?? []) as Array<
     Record<string, unknown>
@@ -130,7 +173,7 @@ export function parseOpenApiJson(obj: Record<string, unknown>): ParsedInfo {
   return {
     name: info.title ? String(info.title) : undefined,
     endpoint: servers[0]?.url ? String(servers[0].url) : undefined,
-    description: info.description ? String(info.description) : undefined,
+    description: summarizeApiDescription(info.description),
     protocol: "REST",
     inputFormat,
     outputFormat,
@@ -138,6 +181,21 @@ export function parseOpenApiJson(obj: Record<string, unknown>): ParsedInfo {
     category,
   };
 }
+
+/** Parse a JSON or YAML OpenAPI document before extracting catalogue metadata. */
+export function parseOpenApiText(text: string): ParsedInfo {
+  const trimmed = text.trim();
+  const parsed: unknown = trimmed.startsWith("{")
+    ? JSON.parse(trimmed)
+    : parseYaml(trimmed);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("OpenAPI document must be an object.");
+  }
+  return parseOpenApiDocument(parsed as Record<string, unknown>);
+}
+
+/** @deprecated Use parseOpenApiDocument or parseOpenApiText. */
+export const parseOpenApiJson = parseOpenApiDocument;
 
 export function parseWsdl(xmlDoc: Document): ParsedInfo {
   const svc =
