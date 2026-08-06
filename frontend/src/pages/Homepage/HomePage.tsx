@@ -183,7 +183,7 @@ const HomePage: React.FC = () => {
       title:     'API Name',
       dataIndex: 'name',
       key:       'name',
-      width:     180,
+      width:     280,
       ellipsis:  { showTitle: false },
       render: (name: string, record) => (
         <Tooltip title={name} placement="topLeft">

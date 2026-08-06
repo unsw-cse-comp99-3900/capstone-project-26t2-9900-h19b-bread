@@ -133,7 +133,6 @@ const SchemaMappingPage: React.FC = () => {
   const [dbOutputFormat, setDbOutputFormat] = useState<"json" | "xml">("json");
   const [validationSourceSchemaId, setValidationSourceSchemaId] = useState<number | null>(null);
   const [validationTargetSchemaId, setValidationTargetSchemaId] = useState<number | null>(null);
-  const [validationSampleText, setValidationSampleText] = useState("");
   const [validationLoading, setValidationLoading] = useState(false);
   const [validationResult, setValidationResult] = useState<ConnectionValidationResult | null>(null);
 
@@ -296,9 +295,6 @@ const SchemaMappingPage: React.FC = () => {
     setValidationLoading(true);
     setValidationResult(null);
     try {
-      const sample_data = validationSampleText.trim()
-        ? parseJsonObject(validationSampleText, "Sample data")
-        : undefined;
       const result = await validateConnection({
         source_api_id: validationSourceSchema.api_id,
         source_version_id: validationSourceSchema.version_id,
@@ -306,7 +302,6 @@ const SchemaMappingPage: React.FC = () => {
         target_version_id: validationTargetSchema.version_id,
         source_schema_id: validationSourceSchema.schema_id,
         target_schema_id: validationTargetSchema.schema_id,
-        sample_data,
       });
       setValidationResult(result);
       if (result.activation_allowed) {
@@ -406,16 +401,6 @@ const SchemaMappingPage: React.FC = () => {
                         />
                       </Col>
                     </Row>
-                    <Text type="secondary" style={{ display: "block", marginTop: 16 }}>
-                      Sample source payload (optional)
-                    </Text>
-                    <TextArea
-                      rows={6}
-                      value={validationSampleText}
-                      onChange={(e) => setValidationSampleText(e.target.value)}
-                      className="smp-code"
-                      style={{ marginTop: 6 }}
-                    />
                     <Space wrap style={{ marginTop: 12 }}>
                       <Button loading={dbLoading} onClick={() => void loadDbSchemas()}>
                         Reload schemas
