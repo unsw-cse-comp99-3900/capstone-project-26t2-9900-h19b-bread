@@ -23,6 +23,7 @@ import {
   MinusCircleOutlined,
   SyncOutlined,
   SearchOutlined,
+  EyeOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
@@ -254,11 +255,37 @@ const HomePage: React.FC = () => {
     ),
   };
 
+  const browseColumn: TableColumnsType<ApiRecord>[number] = {
+    title:  'Actions',
+    key:    'browse',
+    align:  'center',
+    width:  96,
+    render: (_, record) => (
+      <Space size={6}>
+        <Tooltip title="View details">
+          <Button
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => navigate(`/apis/${record.key}`)}
+          />
+        </Tooltip>
+        <Tooltip title="Schema mapping for this API">
+          <Button
+            size="small"
+            icon={<SwapOutlined />}
+            className="hp-btn-mapping"
+            onClick={() => navigate(`/apis/${record.key}/mapping`)}
+          />
+        </Tooltip>
+      </Space>
+    ),
+  };
+
   const operateColumn: TableColumnsType<ApiRecord>[number] = {
-    title:  'Operate',
+    title:  'Actions',
     key:    'operate',
     align:  'center',
-    width:  108,
+    width:  132,
     render: (_, record) => {
       const canManage = !!record.canManage;
       const canUpdate =
@@ -267,6 +294,13 @@ const HomePage: React.FC = () => {
         record.status !== 'Validating';
       return (
         <Space size={6}>
+          <Tooltip title="View details">
+            <Button
+              size="small"
+              icon={<EyeOutlined />}
+              onClick={() => navigate(`/apis/${record.key}`)}
+            />
+          </Tooltip>
           <Tooltip
             title={
               !canManage
@@ -289,7 +323,7 @@ const HomePage: React.FC = () => {
               }}
             />
           </Tooltip>
-          <Tooltip title="Schema Mapping">
+          <Tooltip title="Schema mapping for this API">
             <Button
               size="small"
               icon={<SwapOutlined />}
@@ -331,7 +365,7 @@ const HomePage: React.FC = () => {
 
   const columns: TableColumnsType<ApiRecord> =
     listTab === 'all'
-      ? [...baseColumns.slice(0, 3), creatorColumn, ...baseColumns.slice(3)]
+      ? [...baseColumns.slice(0, 3), creatorColumn, ...baseColumns.slice(3), browseColumn]
       : [...baseColumns, operateColumn];
 
   return (
@@ -340,16 +374,13 @@ const HomePage: React.FC = () => {
         <div className="hp-card__header">
           <div>
             <Title level={5} className="hp-card__title">
-              API Publisher — Dashboard
+              Dashboard
             </Title>
             <span className="hp-card__desc">
               Browse enterprise APIs or manage your own submissions
             </span>
           </div>
           <div className="hp-card__header-actions">
-            <Button icon={<SwapOutlined />} onClick={() => navigate('/schema-mapping')}>
-              Schema Mapping
-            </Button>
             <Button
               type="primary"
               icon={<PlusOutlined />}

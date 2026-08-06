@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from "../utils/request";
+import { apiPost } from "../utils/request";
 
 export type ConnectionValidationStageStatus =
   | "RUNNING"
@@ -50,24 +50,6 @@ export interface ConnectionValidationResult {
   reasons: ConnectionValidationReason[];
 }
 
-export interface ConnectionValidationRunSummary {
-  connection_validation_run_id: number;
-  source_api_id: number;
-  source_version_id: number;
-  target_api_id: number;
-  target_version_id: number;
-  compatibility_result_id: number | null;
-  status: "RUNNING" | "PASSED" | "FAILED" | "CANCELLED" | "STALE";
-  trigger_type: string;
-  created_by: number | null;
-  started_at: string;
-  completed_at: string | null;
-}
-
-export interface ConnectionValidationRunDetail extends ConnectionValidationRunSummary {
-  stages: ConnectionValidationStage[];
-}
-
 export function validateConnection(payload: {
   source_api_id: number;
   source_version_id: number;
@@ -82,12 +64,4 @@ export function validateConnection(payload: {
     trigger_type: "MANUAL",
     ...payload,
   });
-}
-
-export function getConnectionValidationRun(
-  runId: number,
-): Promise<ConnectionValidationRunDetail> {
-  return apiGet<ConnectionValidationRunDetail>(
-    `/api/v1/connection-validation/runs/${runId}`,
-  );
 }

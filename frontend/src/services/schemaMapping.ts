@@ -20,14 +20,6 @@ export interface TransformPreviewResponse {
   transform_code: string;
 }
 
-export interface MatrixResponse {
-  matrix: Array<Array<Record<string, unknown>>>;
-}
-
-export interface SchemaInferenceResponse {
-  schema: Record<string, unknown>;
-}
-
 export interface ApiSchemaSummary {
   schema_id: number;
   api_id: number;
@@ -66,15 +58,6 @@ function postMapping<T>(url: string, data: unknown): Promise<T> {
   return request.post(url, data, { timeout: 60000 }) as unknown as Promise<T>;
 }
 
-export function compareSchemas(payload: {
-  source_schema: Record<string, unknown>;
-  target_schema: Record<string, unknown>;
-  source_name?: string;
-  target_name?: string;
-}): Promise<SchemaCompareResponse> {
-  return postMapping("/api/v1/schema-mapping/compare", payload);
-}
-
 export function listApiSchemas(): Promise<ApiSchemaSummary[]> {
   return request.get(
     "/api/v1/schema-mapping/api-schemas",
@@ -102,39 +85,5 @@ export function transformApiPreview(payload: {
     format: "json",
     save_run: true,
     ...payload,
-  });
-}
-
-export function buildMatrix(
-  schemas: Array<{ name: string; schema: Record<string, unknown> }>,
-): Promise<MatrixResponse> {
-  return postMapping("/api/v1/schema-mapping/matrix", { schemas });
-}
-
-export function transformPreview(payload: {
-  source_schema: Record<string, unknown>;
-  target_schema: Record<string, unknown>;
-  data: Record<string, unknown>;
-  format?: "json" | "xml";
-  source_name?: string;
-  target_name?: string;
-}): Promise<TransformPreviewResponse> {
-  return postMapping("/api/v1/schema-mapping/transform-preview", {
-    format: "json",
-    ...payload,
-  });
-}
-
-export function inferJsonSchema(
-  data: unknown,
-): Promise<SchemaInferenceResponse> {
-  return postMapping("/api/v1/schema-mapping/infer-json-schema", { data });
-}
-
-export function inferXmlSchema(
-  xml_content: string,
-): Promise<SchemaInferenceResponse> {
-  return postMapping("/api/v1/schema-mapping/infer-xml-schema", {
-    xml_content,
   });
 }

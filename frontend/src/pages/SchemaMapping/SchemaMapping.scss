@@ -1,7 +1,7 @@
 .smp-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
   width: 100%;
 }
 
@@ -30,7 +30,8 @@
 .smp-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
+  padding-top: 4px;
 }
 
 .smp-code textarea,
