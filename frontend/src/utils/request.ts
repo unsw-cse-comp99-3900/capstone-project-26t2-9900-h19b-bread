@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type { AxiosError, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import { message } from 'antd';
+import { markSessionExpired } from './authSession';
 
 interface ApiError {
   error?:      string;
@@ -33,11 +34,15 @@ request.interceptors.response.use(
     if (error.response) {
       const { status, data } = error.response;
 
-      if (status === 401) {
+      const wasAuthenticated = Boolean(
+        error.config?.headers?.Authorization || localStorage.getItem('token'),
+      );
+
+      if (status === 401 && wasAuthenticated) {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
-        message.error('Session expired. Please sign in again.', 3);
-        window.location.href = '/login';
+        markSessionExpired();
+        window.location.replace('/login');
         return Promise.reject(data);
       }
 

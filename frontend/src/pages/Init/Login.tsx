@@ -1,18 +1,38 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Form, Input, Typography, message } from "antd";
 import { UserOutlined, LockOutlined, ApiOutlined } from "@ant-design/icons";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useDispatch } from "react-redux";
 import { login } from "../../services/login";
 import type { LoginRequest } from "../../services/login";
 import { setCredentials } from "../../store/authSlice";
 import type { AppDispatch } from "../../store";
+import { consumeSessionExpiredNotice } from "../../utils/authSession";
 import "./Login.scss";
 
 const Login = () => {
   const navigate  = useNavigate();
+  const location  = useLocation();
   const dispatch  = useDispatch<AppDispatch>();
   const [loading, setLoading] = useState(false);
+  const expiryNoticeShown = useRef(false);
+
+  useEffect(() => {
+    if (expiryNoticeShown.current) return;
+
+    const redirectedForMissingToken = Boolean(
+      (location.state as { sessionExpired?: boolean } | null)?.sessionExpired,
+    );
+
+    if (redirectedForMissingToken || consumeSessionExpiredNotice()) {
+      expiryNoticeShown.current = true;
+      message.warning('Your session has expired. Please sign in again.', 5);
+
+      if (redirectedForMissingToken) {
+        navigate('/login', { replace: true, state: null });
+      }
+    }
+  }, [location.state, navigate]);
 
   const onFinish = async (values: LoginRequest) => {
     setLoading(true);
