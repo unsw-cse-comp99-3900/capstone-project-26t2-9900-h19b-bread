@@ -1,12 +1,12 @@
 # Validation Pipeline Rules — Reference
 
-Owner: Backend Member 2 (Validation Pipeline)
 Scope: the full submission validation pipeline — structural validation (FR-4),
 e-invoicing domain compliance (FR-5), security metadata (FR-6), and the broad
 "metadata consistency" checks (FR-3) that verify submission-form metadata against
 the actual uploaded specification. Covers **both REST/OpenAPI and SOAP/WSDL**.
 
-Implementation: `app/services/validation_service.py`
+Implementation: `app/services/validation_service.py`,
+`app/services/validation_domain.py`, and `app/services/validation_security.py`
 Entry point: `validate_specification(ValidationRequest) -> ValidationResponse`
 
 ---
@@ -136,8 +136,9 @@ A submission can PASS only with **structural or standard** evidence
 ## 6. FR-6 — Security & authentication metadata
 
 `auth_method` is submission-form metadata (distinct from the spec's own security
-declaration). Accepted values: `OAuth2`, `API Key`, `Basic`, `mTLS`
-(aliases normalized, e.g. `OAuth 2.0` → `OAUTH2`).
+declaration). Accepted normalized values are `OAUTH2`, `API_KEY`, `BASIC`,
+`MTLS`, `TOKEN`, and `BEARER` (aliases are normalized, for example
+`OAuth 2.0` → `OAUTH2` and `JWT` → `BEARER`).
 
 ### Rule 1 (both protocols)
 - Missing → `SECURITY_AUTH_METHOD_MISSING` (FAIL).
@@ -154,8 +155,10 @@ declaration). Accepted values: `OAuth2`, `API Key`, `Basic`, `mTLS`
 ### SOAP
 Evidence detected from WSDL: `<wsp:Policy>`, WS-SecurityPolicy tokens
 (`UsernameToken`→BASIC, `X509Token`/`TransportBinding`→MTLS,
-`IssuedToken`/`SamlToken`→OAUTH2), and HTTPS `<soap:address>`→MTLS. `API_KEY`
-has no standard place in WSDL and is never positively detectable.
+`IssuedToken`/`SamlToken`→OAUTH2), and HTTPS `<soap:address>`. The current
+implementation treats HTTPS transport as MTLS-compatible evidence; HTTPS alone
+does not prove that a client certificate is required. `API_KEY` has no standard
+place in WSDL and is never positively detectable.
 - No policy / token / HTTPS transport at all → `SECURITY_REQUIREMENT_MISSING`
   (FAIL). *(Decision 1: parity with REST — security must be declared.)*
 - `BASIC` / `MTLS` declared but not reflected by the WSDL →
@@ -203,11 +206,16 @@ existing callers keep working): `protocol`, `spec_content`, `auth_method`,
 `endpoint_url`, `input_format`, `output_format`, `capability_category`.
 `app/routers/submissions.py` populates them from `SubmissionRequest`.
 
-## 9. Tests (48 total)
+## 9. Tests (51 collected)
 
 - `tests/test_validation_domain.py` — FR-5 scoring, hard gate, REST + SOAP.
 - `tests/test_validation_security.py` — FR-6 Rule 1/2/3, REST + SOAP decisions.
 - `tests/test_validation_metadata.py` — FR-3 metadata consistency (REST + SOAP),
   WSDL structure, and full-pipeline behaviour (incl. an end-to-end SOAP pass).
 
-Run: `cd backend && pytest tests/ -q`
+Collect or run this validation subset from `backend/`:
+
+```bash
+python -m pytest --collect-only -q tests/test_validation_domain.py tests/test_validation_security.py tests/test_validation_metadata.py
+python -m pytest -q tests/test_validation_domain.py tests/test_validation_security.py tests/test_validation_metadata.py
+```
