@@ -1,73 +1,67 @@
-# React + TypeScript + Vite
+# Frontend development guide
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The frontend is the React 19 and TypeScript user interface for the E-Invoicing API Publisher. It provides authentication, the API dashboard, submission and version workflows, schema mapping, and connection validation.
 
-Currently, two official plugins are available:
+## Prerequisites
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Node.js 22, matching `frontend/Dockerfile`
+- npm with lockfile support
+- A running backend at <http://127.0.0.1:8000> for local development
 
-## React Compiler
+## Install and run
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+From `frontend/`:
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm ci
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Vite normally serves the application at <http://localhost:5173>. The FastAPI CORS configuration permits `localhost:5173` and `127.0.0.1:5173` during local development.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+The shared Axios client uses `VITE_API_BASE_URL` when it is defined and otherwise calls <http://127.0.0.1:8000>. The Docker build sets `VITE_API_BASE_URL=/`, allowing Nginx to proxy `/api/` requests to the backend container.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Scripts
+
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the Vite development server |
+| `npm run lint` | Run ESLint across the frontend |
+| `npm run build` | Type-check and create the production bundle in `dist/` |
+| `npm run preview` | Serve the production bundle locally for inspection |
+
+## Structure
+
+```text
+frontend/
+├── public/              static assets
+├── src/
+│   ├── components/      shared forms and page layout
+│   ├── pages/           login, registration, dashboard, API detail, and mapping views
+│   ├── services/        typed backend API calls
+│   ├── store/           Redux Toolkit state
+│   ├── styles/          shared theme styles
+│   ├── types/           shared TypeScript models
+│   ├── utils/           Axios client, authentication session, and helpers
+│   ├── App.tsx          routes and route guards
+│   └── main.tsx         React entry point
+├── nginx.conf           production SPA and `/api/` proxy configuration
+├── Dockerfile           Node build and Nginx runtime image
+└── package.json
 ```
+
+## Authentication behaviour
+
+- Successful login or registration stores the JWT and user summary in browser local storage.
+- The Axios request interceptor attaches the JWT as a Bearer token.
+- An authenticated request receiving HTTP 401 clears the stored session and redirects to `/login`.
+- Routes under `/homepage`, `/apis/:id`, and `/schema-mapping` require a stored token; the backend remains responsible for actual authorization.
+
+## API reference
+
+Frontend service modules under `src/services/` are the client-side integration boundary. The running backend's generated OpenAPI document and Swagger UI are the canonical API references:
+
+- <http://127.0.0.1:8000/openapi.json>
+- <http://127.0.0.1:8000/docs>
+
+Do not maintain a separate hand-written endpoint contract when the generated OpenAPI schema is available.

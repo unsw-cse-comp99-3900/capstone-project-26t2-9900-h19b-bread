@@ -1,63 +1,81 @@
-# BREAD — E-Invoicing API Publisher
+# E-Invoicing API Publisher
 
-UNSW Capstone 26T2 · Team H19B · BREAD
+UNSW Capstone 26T2 · Team H19B
 
-An API publishing and schema-mapping platform for the e-invoicing ecosystem: OpenAPI submission, validation, lifecycle management, version history, and schema mapping.
+The project is a web application for publishing and validating e-invoicing APIs. It supports REST/OpenAPI and SOAP/WSDL submissions, staged validation, lifecycle and version history, database-backed schema mapping, and connection compatibility checks.
 
-## Tech Stack
+## Technology
 
 | Layer | Technology |
 | --- | --- |
 | Frontend | React 19, TypeScript, Vite, Ant Design, Redux Toolkit |
-| Backend | FastAPI, Uvicorn, Pydantic, JWT |
+| Backend | FastAPI, Uvicorn, Pydantic, psycopg, JWT |
 | Database | PostgreSQL 16 |
-| Deploy | Docker Compose |
+| Deployment | Docker Compose, Nginx |
 
-## Project Structure
+## Repository layout
 
-```
+```text
 .
-├── frontend/          # React frontend
-├── backend/           # FastAPI backend
-├── DB/                # Database init SQL
-├── docker/            # Compose env examples
-├── docs/              # Design docs and notes
-└── compose.yaml       # Full-stack orchestration
+├── backend/       FastAPI application, services, and tests
+├── DB/            PostgreSQL schema and initialization data
+├── docker/        Compose environment template
+├── docs/          Project reports and connection-validation examples
+├── frontend/      React application and Nginx configuration
+└── compose.yaml   Full-stack Docker Compose configuration
 ```
 
-## Quick Start (Docker, recommended)
+## Run with Docker Compose
 
-Prerequisites: Docker Desktop / Docker Engine.
+Prerequisites: Docker Desktop or Docker Engine with Compose v2.
 
-```bash
-# 1. Configure environment
-cp docker/.env.example docker/.env
-# Edit docker/.env and set POSTGRES_PASSWORD, DATABASE_URL, JWT_SECRET_KEY
+1. Create the local environment file.
 
-# 2. Start all services
-docker compose --env-file docker/.env up --build -d
-```
+   PowerShell:
 
-| Service | URL |
-| --- | --- |
-| Frontend | http://localhost:8080 |
-| Backend API | http://localhost:8000 |
-| Swagger | http://localhost:8000/docs |
-| PostgreSQL | localhost:5432 |
+   ```powershell
+   Copy-Item docker/.env.example docker/.env
+   ```
 
-Stop:
+   macOS/Linux:
+
+   ```bash
+   cp docker/.env.example docker/.env
+   ```
+
+2. Replace every placeholder password and secret in `docker/.env`. Keep `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and `DATABASE_URL` consistent. Reserved characters in the database password must be percent-encoded inside `DATABASE_URL`.
+
+3. Build and start the stack from the repository root.
+
+   ```bash
+   docker compose --env-file docker/.env up -d --build
+   docker compose --env-file docker/.env ps
+   ```
+
+4. Open the application.
+
+   | Service | Default address |
+   | --- | --- |
+   | Web application | <http://localhost:8080> |
+   | Backend health response | <http://localhost:8000> |
+   | Interactive API documentation | <http://localhost:8000/docs> |
+   | PostgreSQL | `localhost:5432` |
+
+Stop the stack without deleting data:
 
 ```bash
 docker compose --env-file docker/.env down
 ```
 
-The DB init script runs only when the volume is first created (default: `DB/19.7database.sql`).
+The database initializer, `DB/19.7database.sql`, runs only when the `postgres_data` volume is first created. Running `docker compose --env-file docker/.env down -v` permanently deletes the project database volume and all uploaded or generated records.
 
-## Local Development
+> **Deployment note:** the bundled SQL initializer contains demonstration enterprises, API records, and a demonstration user for development and evaluation. Remove demonstration credentials and data, configure production secrets, restrict exposed database/backend ports, and add the required TLS/reverse-proxy controls before an internet-facing deployment.
+
+## Local development
 
 ### Database
 
-Start only Postgres with Compose:
+Create `docker/.env` as described above, then start PostgreSQL:
 
 ```bash
 docker compose --env-file docker/.env up -d db
@@ -65,45 +83,81 @@ docker compose --env-file docker/.env up -d db
 
 ### Backend
 
-See [backend/README.md](backend/README.md). Summary:
+The backend requires Python 3.11 and a local `backend/.env` whose `DATABASE_URL` points to the development PostgreSQL service.
 
 ```bash
 cd backend
-python3.11 -m venv .venv
-# Windows: .venv\Scripts\activate
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # set DATABASE_URL and JWT settings
-uvicorn app.main:app --reload
+python -m venv .venv
+# PowerShell: .\.venv\Scripts\Activate.ps1
+# macOS/Linux: source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
+
+Copy `.env.example` to `.env`, replace its placeholders, then run:
+
+```bash
+python -m uvicorn app.main:app --reload
+```
+
+See [backend/README.md](backend/README.md) for backend tests and structure.
 
 ### Frontend
 
+The frontend uses Node.js 22, matching its Docker build image.
+
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Dev server: http://localhost:5173 (CORS is configured for this origin).
+The Vite development server normally opens at <http://localhost:5173>. Its default API base URL is <http://127.0.0.1:8000>; the Compose build instead uses the Nginx `/api/` reverse proxy.
 
-## Features
+See [frontend/README.md](frontend/README.md) for available scripts and frontend structure.
 
-- User registration / login (JWT)
-- API submission and OpenAPI validation
-- Dashboard: all / my API lists with search
-- API detail, lifecycle actions, version history
-- Schema mapping edit and validation
+## Current capabilities
 
-## Related Docs
+- JWT registration, login, protected routes, and session-expiry handling
+- API submission from pasted/uploaded content or a specification URL
+- REST/OpenAPI and SOAP/WSDL parsing and three-stage publication validation
+- Drafts, enterprise-scoped dashboard lists, search, API detail, withdrawal, and publication lifecycle
+- Version creation, update, history, validation results, and specification retrieval
+- Persisted API-schema comparison, mapping rules, JSON/XML transform preview, and transform-run evidence
+- Persisted source-to-target connection validation with staged compatibility results
 
-| Doc | Description |
-| --- | --- |
-| [backend/README.md](backend/README.md) | Backend local setup |
-| [frontend/src/apidoc/Frontend_Backend_API_Contract_Updated_With_Token.md](frontend/src/apidoc/Frontend_Backend_API_Contract_Updated_With_Token.md) | Frontend–backend API contract |
-| [backend/docs/metadata-validation-rules.md](backend/docs/metadata-validation-rules.md) | Metadata validation rules |
-| [docs/](docs/) | Proposal / design PDFs |
+## Verification commands
+
+Backend:
+
+```bash
+cd backend
+python -m pytest -q
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm run lint
+npm run build
+```
+
+Compose configuration:
+
+```bash
+docker compose --env-file docker/.env config --quiet
+```
+
+## Documentation
+
+- The running backend's Swagger UI at `/docs` and generated OpenAPI schema at `/openapi.json` are the canonical API reference.
+- [Backend guide](backend/README.md)
+- [Frontend guide](frontend/README.md)
+- [Publication validation rules](backend/docs/metadata-validation-rules.md)
+- [Connection-validation source example](docs/connection-validation-source-openapi.json)
+- [Connection-validation target example](docs/connection-validation-target-openapi.json)
+- `docs/` also contains the original proposal and design report PDFs for project background; they are not deployment instructions.
 
 ## Team
 
-Capstone Project 26T2 · 9900 · H19B · BREAD
+Capstone Project 26T2 · 9900 · H19B
