@@ -1,5 +1,4 @@
 import { apiGet, apiPost } from '../utils/request';
-import request from '../utils/request';
 import type { Protocol } from '../utils/helper';
 import type { ValidationApiResponse } from './validation';
 
@@ -78,12 +77,4 @@ export function saveDraft(data: SubmissionRequest): Promise<DraftSubmissionRespo
 
 export function importFromUrl(data: UrlImportRequest): Promise<SubmissionApiResponse> {
   return apiPost<SubmissionApiResponse>('/api/v1/submissions/import-url', data);
-}
-
-/** Multipart file upload submission (backend Form endpoint). */
-export function uploadSubmission(formData: FormData): Promise<SubmissionApiResponse> {
-  return request.post(
-    '/api/v1/submissions/upload',
-    formData,
-  ) as unknown as Promise<SubmissionApiResponse>;
 }

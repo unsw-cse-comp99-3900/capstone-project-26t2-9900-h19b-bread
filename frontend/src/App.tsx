@@ -9,7 +9,9 @@ import SchemaMappingPage from './pages/SchemaMapping/SchemaMappingPage';
 
 const ProtectedRoute = ({ element }: { element: React.ReactElement }) => {
   const token = useSelector((s: RootState) => s.auth.token);
-  return token ? element : <Navigate to="/login" replace />;
+  return token
+    ? element
+    : <Navigate to="/login" replace state={{ sessionExpired: true }} />;
 };
 
 const GuestRoute = ({ element }: { element: React.ReactElement }) => {

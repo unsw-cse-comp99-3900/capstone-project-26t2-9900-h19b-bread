@@ -58,8 +58,8 @@ const Register = () => {
         <div className="login-root__logo-icon">
           <ApiOutlined />
         </div>
-        <span className="login-root__sys-name">E-Invoice API Ecosystem</span>
-        <span className="login-root__sys-sub">Discovery · Composition · Publisher</span>
+        <span className="login-root__sys-name">E-Invoice API Publisher</span>
+        <span className="login-root__sys-sub">Publish · Validate · Map enterprise APIs</span>
       </div>
 
       {/* ── Right form panel ── */}

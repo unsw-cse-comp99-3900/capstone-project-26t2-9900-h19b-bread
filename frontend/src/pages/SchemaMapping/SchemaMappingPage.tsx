@@ -17,24 +17,17 @@ import {
 } from "antd";
 import {
   ArrowLeftOutlined,
-  DownloadOutlined,
   SwapOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useParams } from "react-router-dom";
 import PublisherLayout from "../../components/PublisherLayout";
 import {
-  buildMatrix,
   compareApiSchemas,
-  compareSchemas,
-  inferJsonSchema,
   listApiSchemas,
   transformApiPreview,
-  transformPreview,
   type ApiSchemaCompareResponse,
   type ApiSchemaSummary,
   type ApiSchemaTransformPreviewResponse,
-  type SchemaCompareResponse,
-  type TransformPreviewResponse,
 } from "../../services/schemaMapping";
 import {
   validateConnection,
@@ -54,16 +47,6 @@ function parseJsonObject(raw: string, label: string): Record<string, unknown> {
     throw new Error(`${label} must be a JSON object.`);
   }
   return parsed as Record<string, unknown>;
-}
-
-function downloadText(filename: string, content: string) {
-  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 const compatColor = (level: string): string => {
@@ -132,38 +115,11 @@ const isTechnicalEndpointSchema = (schema: ApiSchemaSummary) => {
 const SchemaMappingPage: React.FC = () => {
   const navigate = useNavigate();
   const { id: apiId } = useParams<{ id?: string }>();
+  const focusedApiId = apiId ? Number(apiId) : null;
 
-  const [sourceName, setSourceName] = useState("Source");
-  const [targetName, setTargetName] = useState("Target");
-  const [sourceText, setSourceText] = useState(
-    '{\n  "type": "object",\n  "properties": {\n    "invoiceId": { "type": "string" },\n    "total": { "type": "number" }\n  },\n  "required": ["invoiceId"]\n}',
-  );
-  const [targetText, setTargetText] = useState(
-    '{\n  "type": "object",\n  "properties": {\n    "id": { "type": "string" },\n    "amount": { "type": "number" }\n  },\n  "required": ["id", "amount"]\n}',
-  );
-  const [sampleText, setSampleText] = useState(
-    '{\n  "invoiceId": "INV-001",\n  "total": 120.5\n}',
-  );
-  const [matrixText, setMatrixText] = useState(
-    '[\n  { "name": "A", "schema": { "type": "object", "properties": { "a": { "type": "string" } } } },\n  { "name": "B", "schema": { "type": "object", "properties": { "a": { "type": "string" }, "b": { "type": "number" } } } }\n]',
-  );
-
-  const [comparing, setComparing] = useState(false);
-  const [transforming, setTransforming] = useState(false);
-  const [matrixLoading, setMatrixLoading] = useState(false);
   const [dbLoading, setDbLoading] = useState(false);
   const [dbComparing, setDbComparing] = useState(false);
   const [dbTransforming, setDbTransforming] = useState(false);
-  const [comparison, setComparison] = useState<SchemaCompareResponse | null>(
-    null,
-  );
-  const [transform, setTransform] = useState<TransformPreviewResponse | null>(
-    null,
-  );
-  const [matrix, setMatrix] = useState<Array<
-    Array<Record<string, unknown>>
-  > | null>(null);
-  const [outputFormat, setOutputFormat] = useState<"json" | "xml">("json");
   const [apiSchemas, setApiSchemas] = useState<ApiSchemaSummary[]>([]);
   const [sourceSchemaId, setSourceSchemaId] = useState<number | null>(null);
   const [targetSchemaId, setTargetSchemaId] = useState<number | null>(null);
@@ -177,38 +133,42 @@ const SchemaMappingPage: React.FC = () => {
   const [dbOutputFormat, setDbOutputFormat] = useState<"json" | "xml">("json");
   const [validationSourceSchemaId, setValidationSourceSchemaId] = useState<number | null>(null);
   const [validationTargetSchemaId, setValidationTargetSchemaId] = useState<number | null>(null);
-  const [validationSampleText, setValidationSampleText] = useState("");
   const [validationLoading, setValidationLoading] = useState(false);
   const [validationResult, setValidationResult] = useState<ConnectionValidationResult | null>(null);
+
+  const applySchemaDefaults = (schemas: ApiSchemaSummary[]) => {
+    const focused = focusedApiId != null
+      ? schemas.filter((schema) => schema.api_id === focusedApiId)
+      : [];
+    const pool = focused.length > 0 ? focused : schemas;
+
+    const outputSchema =
+      pool.find((schema) => hasDirection(schema.direction, "OUTPUT"))
+      ?? schemas.find((schema) => hasDirection(schema.direction, "OUTPUT"));
+    const inputSchema =
+      schemas.find((schema) =>
+        hasDirection(schema.direction, "INPUT")
+        && (focusedApiId == null || schema.api_id !== focusedApiId),
+      )
+      ?? pool.find((schema) => hasDirection(schema.direction, "INPUT"))
+      ?? schemas.find((schema) => hasDirection(schema.direction, "INPUT"));
+
+    setSourceSchemaId((prev) => prev ?? outputSchema?.schema_id ?? pool[0]?.schema_id ?? null);
+    setTargetSchemaId((prev) => {
+      if (prev != null) return prev;
+      const fallback = schemas.find((schema) => schema.schema_id !== (outputSchema?.schema_id ?? pool[0]?.schema_id));
+      return inputSchema?.schema_id ?? fallback?.schema_id ?? null;
+    });
+    setValidationSourceSchemaId((prev) => prev ?? outputSchema?.schema_id ?? null);
+    setValidationTargetSchemaId((prev) => prev ?? inputSchema?.schema_id ?? null);
+  };
 
   const loadDbSchemas = async () => {
     setDbLoading(true);
     try {
       const schemas = await listApiSchemas();
       setApiSchemas(schemas);
-      const businessSchemas = schemas.filter((schema) => !isTechnicalEndpointSchema(schema));
-      const outputSchema = businessSchemas.find((schema) => hasDirection(schema.direction, "OUTPUT"));
-      const inputSchema = businessSchemas.find((schema) => hasDirection(schema.direction, "INPUT"));
-      const currentSource = businessSchemas.find((schema) => schema.schema_id === sourceSchemaId);
-      const currentTarget = businessSchemas.find((schema) => schema.schema_id === targetSchemaId);
-      const currentValidationSource = businessSchemas.find((schema) => schema.schema_id === validationSourceSchemaId);
-      const currentValidationTarget = businessSchemas.find((schema) => schema.schema_id === validationTargetSchemaId);
-      if (!currentSource) {
-        setSourceSchemaId(businessSchemas[0]?.schema_id ?? null);
-      }
-      if (!currentTarget) {
-        setTargetSchemaId(businessSchemas[1]?.schema_id ?? null);
-      }
-      if (outputSchema && (!currentValidationSource || !hasDirection(currentValidationSource.direction, "OUTPUT"))) {
-        setValidationSourceSchemaId(outputSchema.schema_id);
-      } else if (!outputSchema) {
-        setValidationSourceSchemaId(null);
-      }
-      if (inputSchema && (!currentValidationTarget || !hasDirection(currentValidationTarget.direction, "INPUT"))) {
-        setValidationTargetSchemaId(inputSchema.schema_id);
-      } else if (!inputSchema) {
-        setValidationTargetSchemaId(null);
-      }
+      applySchemaDefaults(schemas);
     } finally {
       setDbLoading(false);
     }
@@ -220,21 +180,7 @@ const SchemaMappingPage: React.FC = () => {
     }, 0);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const issueRows = useMemo(() => {
-    if (!comparison?.issues) return [];
-    return comparison.issues.map((issue, index) => ({
-      key: String(index),
-      type: String(issue.code ?? issue.type ?? issue.issue_type ?? "issue"),
-      path: String(
-        issue.source_path && issue.target_path
-          ? `${issue.source_path} → ${issue.target_path}`
-          : (issue.path ?? issue.field ?? "—"),
-      ),
-      message: String(issue.message ?? issue.detail ?? JSON.stringify(issue)),
-    }));
-  }, [comparison]);
+  }, [focusedApiId]);
 
   const dbIssueRows = useMemo(() => {
     const issues = dbComparison?.comparison.issues;
@@ -267,7 +213,7 @@ const SchemaMappingPage: React.FC = () => {
         const media = schema.media_type || schema.format;
         return {
           value: schema.schema_id,
-          label: `${schema.api_name} · ${schema.direction}${response} ${media} · ${source} · ${schema.version_number} (#${schema.schema_id})`,
+          label: `${schema.api_name} · ${schema.direction}${response} ${media} · ${source} · ${schema.version_number}`,
         };
       }),
     [businessSchemas],
@@ -290,92 +236,6 @@ const SchemaMappingPage: React.FC = () => {
     () => apiSchemas.find((schema) => schema.schema_id === validationTargetSchemaId) ?? null,
     [apiSchemas, validationTargetSchemaId],
   );
-
-  const handleInferSourceFromSample = async () => {
-    try {
-      const data = JSON.parse(sampleText);
-      const res = await inferJsonSchema(data);
-      const schema =
-        (res as { schema?: Record<string, unknown> }).schema ??
-        (res as unknown as Record<string, unknown>);
-      setSourceText(JSON.stringify(schema, null, 2));
-      message.success("Source schema inferred from sample JSON.");
-    } catch {
-      // interceptor / parse error
-    }
-  };
-
-  const handleCompare = async () => {
-    setComparing(true);
-    setComparison(null);
-    try {
-      const source_schema = parseJsonObject(sourceText, "Source schema");
-      const target_schema = parseJsonObject(targetText, "Target schema");
-      const res = await compareSchemas({
-        source_schema,
-        target_schema,
-        source_name: sourceName,
-        target_name: targetName,
-      });
-      setComparison(res);
-      message.success("Comparison completed.");
-    } catch (err) {
-      if (err instanceof Error && err.message.includes("schema")) {
-        message.error(err.message);
-      }
-    } finally {
-      setComparing(false);
-    }
-  };
-
-  const handleTransform = async () => {
-    setTransforming(true);
-    setTransform(null);
-    try {
-      const source_schema = parseJsonObject(sourceText, "Source schema");
-      const target_schema = parseJsonObject(targetText, "Target schema");
-      const data = parseJsonObject(sampleText, "Sample data");
-      const res = await transformPreview({
-        source_schema,
-        target_schema,
-        data,
-        format: outputFormat,
-        source_name: sourceName,
-        target_name: targetName,
-      });
-      setTransform(res);
-      message.success("Transform preview ready.");
-    } catch (err) {
-      if (err instanceof Error && err.message.includes("empty")) {
-        message.error(err.message);
-      }
-    } finally {
-      setTransforming(false);
-    }
-  };
-
-  const handleMatrix = async () => {
-    setMatrixLoading(true);
-    setMatrix(null);
-    try {
-      const parsed = JSON.parse(matrixText) as Array<{
-        name: string;
-        schema: Record<string, unknown>;
-      }>;
-      if (!Array.isArray(parsed) || parsed.length < 1) {
-        throw new Error("Matrix input must be a non-empty array.");
-      }
-      const res = await buildMatrix(parsed);
-      setMatrix(res.matrix);
-      message.success("Compatibility matrix built.");
-    } catch (err) {
-      message.error(
-        err instanceof Error ? err.message : "Invalid matrix input.",
-      );
-    } finally {
-      setMatrixLoading(false);
-    }
-  };
 
   const handleDbCompare = async () => {
     if (sourceSchemaId == null || targetSchemaId == null) {
@@ -435,9 +295,6 @@ const SchemaMappingPage: React.FC = () => {
     setValidationLoading(true);
     setValidationResult(null);
     try {
-      const sample_data = validationSampleText.trim()
-        ? parseJsonObject(validationSampleText, "Sample data")
-        : undefined;
       const result = await validateConnection({
         source_api_id: validationSourceSchema.api_id,
         source_version_id: validationSourceSchema.version_id,
@@ -445,13 +302,12 @@ const SchemaMappingPage: React.FC = () => {
         target_version_id: validationTargetSchema.version_id,
         source_schema_id: validationSourceSchema.schema_id,
         target_schema_id: validationTargetSchema.schema_id,
-        sample_data,
       });
       setValidationResult(result);
       if (result.activation_allowed) {
-        message.success("Connection validation passed. Connection can be activated.");
+        message.success("Connection validation passed.");
       } else {
-        message.warning("Connection cannot be activated. Review the validation results.");
+        message.warning("Connection cannot be activated. Review the results.");
       }
     } catch (err) {
       if (err instanceof Error) message.error(err.message);
@@ -459,6 +315,17 @@ const SchemaMappingPage: React.FC = () => {
       setValidationLoading(false);
     }
   };
+
+  const summaryEntries = useMemo(() => {
+    const summary = dbComparison?.comparison.summary;
+    if (!summary) return [];
+    return Object.entries(summary).map(([key, value]) => ({
+      key,
+      value: typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+        ? String(value)
+        : JSON.stringify(value),
+    }));
+  }, [dbComparison]);
 
   return (
     <PublisherLayout>
@@ -471,22 +338,22 @@ const SchemaMappingPage: React.FC = () => {
           >
             {apiId ? "Back to API Detail" : "Back to Dashboard"}
           </Button>
-          {apiId && <Tag color="blue">API #{apiId}</Tag>}
+          {apiId && <Tag color="blue">Focused API #{apiId}</Tag>}
         </div>
 
         <Card className="smp-hero" bordered={false}>
           <Space align="start" size={12}>
-            <SwapOutlined
-              style={{ fontSize: 22, color: "#1a6fd4", marginTop: 4 }}
-            />
+            <SwapOutlined style={{ fontSize: 22, color: "#1a6fd4", marginTop: 4 }} />
             <div>
               <Title level={3} style={{ margin: 0 }}>
                 Schema Mapping
               </Title>
               <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                Compare schemas, preview transforms, and check multi-schema
-                compatibility. Paste JSON Schema objects below (or infer source
-                schema from sample data).
+                Validate API connections and build mappings from published schemas
+                stored in the platform.
+                {focusedApiId != null
+                  ? " Source schemas for this API are preselected when available."
+                  : ""}
               </Paragraph>
             </div>
           </Space>
@@ -503,10 +370,10 @@ const SchemaMappingPage: React.FC = () => {
                     showIcon
                     type="info"
                     message="Validate before connecting"
-                    description="Only published OUTPUT schemas can be sources and published INPUT schemas can be targets. A connection remains disabled unless the validation result allows activation."
+                    description="Use a published OUTPUT schema as source and a published INPUT schema as target. Activation stays blocked until validation allows it."
                   />
                   <Card title="Connection contract" className="smp-card" bordered={false}>
-                    <Row gutter={[12, 12]}>
+                    <Row gutter={[16, 16]}>
                       <Col xs={24} lg={12}>
                         <Text type="secondary">Source API version (OUTPUT)</Text>
                         <Select
@@ -516,6 +383,8 @@ const SchemaMappingPage: React.FC = () => {
                           loading={dbLoading}
                           placeholder="Choose a source output"
                           style={{ width: "100%", marginTop: 6 }}
+                          showSearch
+                          optionFilterProp="label"
                         />
                       </Col>
                       <Col xs={24} lg={12}>
@@ -527,19 +396,11 @@ const SchemaMappingPage: React.FC = () => {
                           loading={dbLoading}
                           placeholder="Choose a target input"
                           style={{ width: "100%", marginTop: 6 }}
+                          showSearch
+                          optionFilterProp="label"
                         />
                       </Col>
                     </Row>
-                    <Text type="secondary" style={{ display: "block", marginTop: 16 }}>
-                      Sample source payload (optional)
-                    </Text>
-                    <TextArea
-                      rows={8}
-                      value={validationSampleText}
-                      onChange={(e) => setValidationSampleText(e.target.value)}
-                      className="smp-code"
-                      style={{ marginTop: 6 }}
-                    />
                     <Space wrap style={{ marginTop: 12 }}>
                       <Button loading={dbLoading} onClick={() => void loadDbSchemas()}>
                         Reload schemas
@@ -589,9 +450,25 @@ const SchemaMappingPage: React.FC = () => {
                         pagination={false}
                         dataSource={validationResult.reasons.map((reason, index) => ({ ...reason, key: index }))}
                         columns={[
-                          { title: "Severity", dataIndex: "severity", width: 110, render: (severity: string) => <Tag color={severity === "ERROR" ? "error" : severity === "WARNING" ? "warning" : "blue"}>{severity}</Tag> },
+                          {
+                            title: "Severity",
+                            dataIndex: "severity",
+                            width: 110,
+                            render: (severity: string) => (
+                              <Tag color={severity === "ERROR" ? "error" : severity === "WARNING" ? "warning" : "blue"}>
+                                {severity}
+                              </Tag>
+                            ),
+                          },
                           { title: "Stage", dataIndex: "stage", width: 160 },
-                          { title: "Path", width: 200, render: (_, row: { source_path: string | null; target_path: string | null }) => row.source_path || row.target_path ? `${row.source_path ?? "—"} → ${row.target_path ?? "—"}` : "—" },
+                          {
+                            title: "Path",
+                            width: 200,
+                            render: (_, row: { source_path: string | null; target_path: string | null }) =>
+                              row.source_path || row.target_path
+                                ? `${row.source_path ?? "—"} → ${row.target_path ?? "—"}`
+                                : "—",
+                          },
                           { title: "Message", dataIndex: "message" },
                         ]}
                         locale={{ emptyText: "No validation issues reported." }}
@@ -600,28 +477,26 @@ const SchemaMappingPage: React.FC = () => {
                         style={{ marginTop: 16 }}
                         items={[{
                           key: "business-rules",
-                          label: "Business rules diagnostics (informational)",
-                          children: <pre className="smp-pre">{JSON.stringify(validationResult.business_rules_diagnostics, null, 2)}</pre>,
+                          label: "Business rules diagnostics",
+                          children: (
+                            <pre className="smp-pre">
+                              {JSON.stringify(validationResult.business_rules_diagnostics, null, 2)}
+                            </pre>
+                          ),
                         }]}
                       />
                     </Card>
                   )}
-
                 </div>
               ),
             },
             {
               key: "database",
-              label: "Database Flow",
+              label: "Mapping & Transform",
               children: (
                 <div className="smp-panel">
-                  <Card
-                    title="Saved API schemas"
-                    className="smp-card"
-                    bordered={false}
-                    size="small"
-                  >
-                    <Row gutter={[12, 12]}>
+                  <Card title="Select schemas" className="smp-card" bordered={false}>
+                    <Row gutter={[16, 16]}>
                       <Col xs={24} lg={12}>
                         <Text type="secondary">Source schema</Text>
                         <Select
@@ -630,6 +505,8 @@ const SchemaMappingPage: React.FC = () => {
                           options={schemaOptions}
                           loading={dbLoading}
                           style={{ width: "100%", marginTop: 6 }}
+                          showSearch
+                          optionFilterProp="label"
                         />
                       </Col>
                       <Col xs={24} lg={12}>
@@ -640,14 +517,13 @@ const SchemaMappingPage: React.FC = () => {
                           options={schemaOptions}
                           loading={dbLoading}
                           style={{ width: "100%", marginTop: 6 }}
+                          showSearch
+                          optionFilterProp="label"
                         />
                       </Col>
                     </Row>
                     <Space wrap style={{ marginTop: 14 }}>
-                      <Button
-                        loading={dbLoading}
-                        onClick={() => void loadDbSchemas()}
-                      >
+                      <Button loading={dbLoading} onClick={() => void loadDbSchemas()}>
                         Reload schemas
                       </Button>
                       <Button
@@ -661,44 +537,31 @@ const SchemaMappingPage: React.FC = () => {
                   </Card>
 
                   {dbComparison && (
-                    <Card
-                      title="Saved comparison"
-                      className="smp-card"
-                      bordered={false}
-                    >
+                    <Card title="Comparison result" className="smp-card" bordered={false}>
                       <Space wrap style={{ marginBottom: 12 }}>
                         <Text>{dbComparison.source_schema.api_name}</Text>
                         <Text type="secondary">→</Text>
                         <Text>{dbComparison.target_schema.api_name}</Text>
-                        <Tag
-                          color={compatColor(
-                            dbComparison.comparison.compatibility,
-                          )}
-                        >
+                        <Tag color={compatColor(dbComparison.comparison.compatibility)}>
                           {dbComparison.comparison.compatibility}
                         </Tag>
-                        <Tag>result #{dbComparison.comparison_result_id}</Tag>
                         <Tag>mapping #{dbComparison.mapping_id}</Tag>
                       </Space>
-                      <Alert
-                        type="info"
-                        showIcon
-                        style={{ marginBottom: 12 }}
-                        message="Summary"
-                        description={
-                          <pre className="smp-pre">
-                            {JSON.stringify(
-                              dbComparison.comparison.summary,
-                              null,
-                              2,
-                            )}
-                          </pre>
-                        }
-                      />
-                      <Title level={5}>Mapping rules</Title>
-                      <pre className="smp-pre">
-                        {JSON.stringify(dbComparison.mapping, null, 2)}
-                      </pre>
+                      {summaryEntries.length > 0 && (
+                        <>
+                          <Title level={5}>Summary</Title>
+                          <Table
+                            size="small"
+                            pagination={false}
+                            dataSource={summaryEntries}
+                            columns={[
+                              { title: "Metric", dataIndex: "key", width: 200 },
+                              { title: "Value", dataIndex: "value" },
+                            ]}
+                            style={{ marginBottom: 16 }}
+                          />
+                        </>
+                      )}
                       <Title level={5}>Issues</Title>
                       <Table
                         size="small"
@@ -711,51 +574,61 @@ const SchemaMappingPage: React.FC = () => {
                         ]}
                         locale={{ emptyText: "No issues reported." }}
                       />
+                      <Collapse
+                        style={{ marginTop: 16 }}
+                        items={[{
+                          key: "mapping-rules",
+                          label: "Mapping rules (raw)",
+                          children: (
+                            <pre className="smp-pre">
+                              {JSON.stringify(dbComparison.mapping, null, 2)}
+                            </pre>
+                          ),
+                        }]}
+                      />
                     </Card>
                   )}
 
                   <Card
-                    title="Transform run"
+                    title="Transform preview"
                     className="smp-card"
                     bordered={false}
-                    size="small"
                     extra={
                       <Select
                         size="small"
                         value={dbOutputFormat}
                         onChange={setDbOutputFormat}
                         options={[
-                          { value: "json", label: "JSON out" },
-                          { value: "xml", label: "XML out" },
+                          { value: "json", label: "JSON" },
+                          { value: "xml", label: "XML" },
                         ]}
-                        style={{ width: 110 }}
+                        style={{ width: 100 }}
                       />
                     }
                   >
+                    <Text type="secondary">Sample payload</Text>
                     <TextArea
-                      rows={8}
+                      rows={6}
                       value={dbSampleText}
                       onChange={(e) => setDbSampleText(e.target.value)}
                       className="smp-code"
+                      style={{ marginTop: 6 }}
                     />
                     <Button
                       style={{ marginTop: 12 }}
+                      type="primary"
                       loading={dbTransforming}
                       onClick={() => void handleDbTransform()}
+                      disabled={!dbComparison?.mapping_id}
                     >
-                      Preview & save transform run
+                      Preview & save transform
                     </Button>
                   </Card>
 
                   {dbTransform && (
-                    <Card
-                      title="Saved transform preview"
-                      className="smp-card"
-                      bordered={false}
-                    >
+                    <Card title="Transform result" className="smp-card" bordered={false}>
                       <Space style={{ marginBottom: 12 }} wrap>
                         <Tag>run #{dbTransform.transform_run_id}</Tag>
-                        <Tag>mapping #{dbTransform.mapping_id}</Tag>
                         <Tag>{dbTransform.mapping_status}</Tag>
                         <Tag color="blue">{dbTransform.format}</Tag>
                       </Space>
@@ -765,229 +638,16 @@ const SchemaMappingPage: React.FC = () => {
                           ? dbTransform.result
                           : JSON.stringify(dbTransform.result, null, 2)}
                       </pre>
-                      <Title level={5}>Generated transform code</Title>
-                      <pre className="smp-pre">
-                        {dbTransform.transform_code}
-                      </pre>
-                    </Card>
-                  )}
-                </div>
-              ),
-            },
-            {
-              key: "compare",
-              label: "Compare & Transform",
-              children: (
-                <div className="smp-panel">
-                  <Row gutter={[16, 16]}>
-                    <Col xs={24} lg={12}>
-                      <Card
-                        title="Source schema"
-                        className="smp-card"
-                        bordered={false}
-                        size="small"
-                        extra={
-                          <Input
-                            size="small"
-                            value={sourceName}
-                            onChange={(e) => setSourceName(e.target.value)}
-                            style={{ width: 140 }}
-                          />
-                        }
-                      >
-                        <TextArea
-                          rows={14}
-                          value={sourceText}
-                          onChange={(e) => setSourceText(e.target.value)}
-                          className="smp-code"
-                        />
-                      </Card>
-                    </Col>
-                    <Col xs={24} lg={12}>
-                      <Card
-                        title="Target schema"
-                        className="smp-card"
-                        bordered={false}
-                        size="small"
-                        extra={
-                          <Input
-                            size="small"
-                            value={targetName}
-                            onChange={(e) => setTargetName(e.target.value)}
-                            style={{ width: 140 }}
-                          />
-                        }
-                      >
-                        <TextArea
-                          rows={14}
-                          value={targetText}
-                          onChange={(e) => setTargetText(e.target.value)}
-                          className="smp-code"
-                        />
-                      </Card>
-                    </Col>
-                  </Row>
-
-                  <Card
-                    title="Sample source data"
-                    className="smp-card"
-                    bordered={false}
-                    size="small"
-                    extra={
-                      <Space>
-                        <Select
-                          size="small"
-                          value={outputFormat}
-                          onChange={setOutputFormat}
-                          options={[
-                            { value: "json", label: "JSON out" },
-                            { value: "xml", label: "XML out" },
-                          ]}
-                          style={{ width: 110 }}
-                        />
-                        <Button
-                          size="small"
-                          onClick={() => void handleInferSourceFromSample()}
-                        >
-                          Infer source schema
-                        </Button>
-                      </Space>
-                    }
-                  >
-                    <TextArea
-                      rows={8}
-                      value={sampleText}
-                      onChange={(e) => setSampleText(e.target.value)}
-                      className="smp-code"
-                    />
-                  </Card>
-
-                  <Space wrap>
-                    <Button
-                      type="primary"
-                      loading={comparing}
-                      onClick={() => void handleCompare()}
-                    >
-                      Run comparison
-                    </Button>
-                    <Button
-                      loading={transforming}
-                      onClick={() => void handleTransform()}
-                    >
-                      Transform preview
-                    </Button>
-                    {transform?.transform_code && (
-                      <Button
-                        icon={<DownloadOutlined />}
-                        onClick={() =>
-                          downloadText("transform.py", transform.transform_code)
-                        }
-                      >
-                        Download transform code
-                      </Button>
-                    )}
-                  </Space>
-
-                  {comparison && (
-                    <Card
-                      title="Comparison result"
-                      className="smp-card"
-                      bordered={false}
-                    >
-                      <Space style={{ marginBottom: 12 }} wrap>
-                        <Text>{comparison.source}</Text>
-                        <Text type="secondary">→</Text>
-                        <Text>{comparison.target}</Text>
-                        <Tag color={compatColor(comparison.compatibility)}>
-                          {comparison.compatibility}
-                        </Tag>
-                      </Space>
-                      {comparison.summary && (
-                        <Alert
-                          type="info"
-                          showIcon
-                          style={{ marginBottom: 12 }}
-                          message="Summary"
-                          description={
-                            <pre className="smp-pre">
-                              {JSON.stringify(comparison.summary, null, 2)}
-                            </pre>
-                          }
-                        />
-                      )}
-                      <Table
-                        size="small"
-                        pagination={false}
-                        dataSource={issueRows}
-                        columns={[
-                          { title: "Type", dataIndex: "type", width: 140 },
-                          { title: "Path", dataIndex: "path", width: 180 },
-                          { title: "Message", dataIndex: "message" },
-                        ]}
-                        locale={{ emptyText: "No issues reported." }}
+                      <Collapse
+                        style={{ marginTop: 16 }}
+                        items={[{
+                          key: "transform-code",
+                          label: "Generated transform code",
+                          children: (
+                            <pre className="smp-pre">{dbTransform.transform_code}</pre>
+                          ),
+                        }]}
                       />
-                    </Card>
-                  )}
-
-                  {transform && (
-                    <Card
-                      title="Transform preview"
-                      className="smp-card"
-                      bordered={false}
-                    >
-                      <Space style={{ marginBottom: 12 }}>
-                        <Tag>{transform.mapping_status}</Tag>
-                        <Tag color="blue">{transform.format}</Tag>
-                      </Space>
-                      <Title level={5}>Result</Title>
-                      <pre className="smp-pre">
-                        {typeof transform.result === "string"
-                          ? transform.result
-                          : JSON.stringify(transform.result, null, 2)}
-                      </pre>
-                      <Title level={5}>Mapping</Title>
-                      <pre className="smp-pre">
-                        {JSON.stringify(transform.mapping, null, 2)}
-                      </pre>
-                    </Card>
-                  )}
-                </div>
-              ),
-            },
-            {
-              key: "matrix",
-              label: "Compatibility Matrix",
-              children: (
-                <div className="smp-panel">
-                  <Card
-                    title="Schemas array"
-                    className="smp-card"
-                    bordered={false}
-                    size="small"
-                  >
-                    <Paragraph type="secondary">
-                      Provide an array of objects with <Text code>name</Text>{" "}
-                      and <Text code>schema</Text>.
-                    </Paragraph>
-                    <TextArea
-                      rows={14}
-                      value={matrixText}
-                      onChange={(e) => setMatrixText(e.target.value)}
-                      className="smp-code"
-                    />
-                  </Card>
-                  <Button
-                    type="primary"
-                    loading={matrixLoading}
-                    onClick={() => void handleMatrix()}
-                  >
-                    Build matrix
-                  </Button>
-                  {matrix && (
-                    <Card title="Matrix" className="smp-card" bordered={false}>
-                      <pre className="smp-pre">
-                        {JSON.stringify(matrix, null, 2)}
-                      </pre>
                     </Card>
                   )}
                 </div>
