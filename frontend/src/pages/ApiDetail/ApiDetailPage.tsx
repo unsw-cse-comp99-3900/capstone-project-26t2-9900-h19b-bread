@@ -211,7 +211,8 @@ const ApiDetailPage: React.FC = () => {
   }, [id, loadVersionView]);
 
   useEffect(() => {
-    void loadDetail();
+    const timer = window.setTimeout(() => void loadDetail(), 0);
+    return () => window.clearTimeout(timer);
   }, [loadDetail]);
 
   const handleVersionChange = async (versionId: number) => {
@@ -292,8 +293,7 @@ const ApiDetailPage: React.FC = () => {
   const canManage =
     api.canManage === true ||
     (!!user && api.creatorId === user.user_id) ||
-    role === 'ADMIN' ||
-    role === 'MANAGER';
+    role === 'ADMIN';
 
   const currentStatus = api.status;
   const { color, icon } = statusConfig[currentStatus];

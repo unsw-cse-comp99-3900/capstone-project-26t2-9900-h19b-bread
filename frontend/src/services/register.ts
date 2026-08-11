@@ -5,10 +5,6 @@ export interface RegisterRequest {
   name:          string;
   email:         string;
   password:      string;
-  /** Defaults to 1 on the backend if omitted. */
-  enterprise_id?: number;
-  /** Defaults to "PUBLISHER" on the backend if omitted. */
-  role?:         string;
 }
 
 export interface RegisterResponse {

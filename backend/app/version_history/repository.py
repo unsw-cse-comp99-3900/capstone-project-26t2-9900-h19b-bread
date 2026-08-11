@@ -39,7 +39,7 @@ class PostgresVersionHistoryRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT api_id, submitted_by, status, current_version_id
+                    SELECT api_id, enterprise_id, submitted_by, status, current_version_id
                     FROM api_submission
                     WHERE api_id = %s
                     """ + suffix,

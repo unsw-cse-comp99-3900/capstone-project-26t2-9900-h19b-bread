@@ -30,10 +30,10 @@ def list_versions(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     service: VersionHistoryService = Depends(get_version_history_service),
-    _current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
 ) -> VersionPage:
     try:
-        return VersionPage.model_validate(service.list_versions(api_id, page, page_size))
+        return VersionPage.model_validate(service.list_versions(api_id, page, page_size, current_user))
     except VersionHistoryError as exc:
         _raise_http_error(exc)
 
@@ -43,10 +43,10 @@ def get_version(
     api_id: int,
     version_id: int,
     service: VersionHistoryService = Depends(get_version_history_service),
-    _current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
 ) -> VersionDetail:
     try:
-        return VersionDetail.model_validate(service.get_version(api_id, version_id))
+        return VersionDetail.model_validate(service.get_version(api_id, version_id, current_user))
     except VersionHistoryError as exc:
         _raise_http_error(exc)
 
@@ -56,10 +56,10 @@ def get_version_specification(
     api_id: int,
     version_id: int,
     service: VersionHistoryService = Depends(get_version_history_service),
-    _current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
 ) -> Response:
     try:
-        specification = service.get_specification(api_id, version_id)
+        specification = service.get_specification(api_id, version_id, current_user)
     except VersionHistoryError as exc:
         _raise_http_error(exc)
     media_type = (
@@ -78,7 +78,7 @@ def list_version_events(
     version_id: int | None = Query(default=None),
     event_type: VersionEventType | None = Query(default=None),
     service: VersionHistoryService = Depends(get_version_history_service),
-    _current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
 ) -> EventPage:
     try:
         result = service.list_events(
@@ -87,6 +87,7 @@ def list_version_events(
             page_size,
             version_id,
             event_type,
+            current_user,
         )
         return EventPage.model_validate(result)
     except VersionHistoryError as exc:
@@ -101,7 +102,7 @@ def list_connection_impacts(
     version_id: int | None = Query(default=None),
     lifecycle_status: MappingLifecycleStatus | None = Query(default=None),
     service: VersionHistoryService = Depends(get_version_history_service),
-    _current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
 ) -> ConnectionImpactPage:
     try:
         result = service.list_connection_impacts(
@@ -110,6 +111,7 @@ def list_connection_impacts(
             page_size,
             version_id,
             lifecycle_status,
+            current_user,
         )
         return ConnectionImpactPage.model_validate(result)
     except VersionHistoryError as exc:

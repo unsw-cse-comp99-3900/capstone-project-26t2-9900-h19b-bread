@@ -1,7 +1,5 @@
 import json
 from typing import List
-from urllib.parse import urlparse
-from urllib.request import urlopen
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
@@ -18,6 +16,7 @@ from app.schemas.submission_schema import (
 from app.schemas.validation_schema import ValidationRequest
 from app.services.validation_service import validate_specification
 from app.services.schema_mapping.spec_schema_extractor import sync_api_schemas_from_spec
+from app.services.remote_spec_fetcher import RemoteSpecFetchError, fetch_remote_spec
 
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
@@ -25,40 +24,11 @@ MAX_SPEC_SIZE_BYTES = 5 * 1024 * 1024
 
 
 def read_spec_from_url(spec_url: str) -> str:
-    parsed_url = urlparse(spec_url)
-
-    if parsed_url.scheme not in {"http", "https"}:
-        raise HTTPException(
-            status_code=400,
-            detail="spec_url must use http or https.",
-        )
-
     try:
-        with urlopen(spec_url, timeout=10) as response:
-            content = response.read(MAX_SPEC_SIZE_BYTES + 1)
-
-        if len(content) > MAX_SPEC_SIZE_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail="Specification file is too large. Maximum size is 5MB.",
-            )
-
-        return content.decode("utf-8")
-
-    except HTTPException:
-        raise
-
-    except UnicodeDecodeError:
-        raise HTTPException(
-            status_code=400,
-            detail="Specification content must be valid UTF-8 text.",
-        )
-
-    except Exception as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to import specification from URL: {exc}",
-        )
+        return fetch_remote_spec(spec_url)
+    except RemoteSpecFetchError as exc:
+        status_code = 413 if "too large" in str(exc).lower() else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
 
 def to_plain_value(value):
@@ -420,7 +390,7 @@ def create_submission_records(
 @router.post("", response_model=SubmissionResponse)
 def create_submission(
     request: SubmissionRequest,
-    current_user: dict = Depends(require_role("PUBLISHER", "MANAGER", "ADMIN")),
+    current_user: dict = Depends(require_role("PUBLISHER", "ADMIN")),
 ) -> SubmissionResponse:
     validation_request = ValidationRequest(
         protocol=request.protocol,
@@ -475,7 +445,7 @@ def create_submission(
 
 @router.get("", response_model=List[SubmissionListItem])
 def list_submissions(
-    current_user: dict = Depends(require_role("PUBLISHER", "VIEWER", "MANAGER", "ADMIN")),
+    current_user: dict = Depends(require_role("PUBLISHER", "VIEWER", "ADMIN")),
 ) -> list[SubmissionListItem]:
     enterprise_id = current_user["enterprise_id"]
     current_user_id = current_user["user_id"]
@@ -529,7 +499,7 @@ def list_submissions(
                 is_current_user_api=row["submitted_by"] == current_user_id,
                 can_manage=(
                     row["submitted_by"] == current_user_id
-                    or current_user_role in {"MANAGER", "ADMIN"}
+                    or current_user_role == "ADMIN"
                 ),
             )
             for row in rows
@@ -544,7 +514,7 @@ def list_submissions(
 
 @router.get("/authors", response_model=List[UserListItem])
 def list_submission_authors(
-    current_user: dict = Depends(require_role("PUBLISHER", "VIEWER", "MANAGER", "ADMIN")),
+    current_user: dict = Depends(require_role("PUBLISHER", "VIEWER", "ADMIN")),
 ) -> list[UserListItem]:
     enterprise_id = current_user["enterprise_id"]
 
@@ -583,7 +553,7 @@ def list_submission_authors(
 @router.post("/draft", response_model=DraftSubmissionResponse)
 def save_draft(
     request: SubmissionRequest,
-    current_user: dict = Depends(require_role("PUBLISHER", "MANAGER", "ADMIN")),
+    current_user: dict = Depends(require_role("PUBLISHER", "ADMIN")),
 ) -> DraftSubmissionResponse:
     try:
         api_id = create_submission_records(
@@ -615,7 +585,7 @@ def save_draft(
 @router.post("/import-url", response_model=SubmissionResponse)
 def import_submission_spec_from_url(
     request: SubmissionUrlImportRequest,
-    current_user: dict = Depends(require_role("PUBLISHER", "MANAGER", "ADMIN")),
+    current_user: dict = Depends(require_role("PUBLISHER", "ADMIN")),
 ) -> SubmissionResponse:
     spec_content = read_spec_from_url(str(request.spec_url))
 
@@ -693,7 +663,7 @@ async def upload_submission_spec(
     capability_category: str = Form(...),
     description: str | None = Form(None),
     file: UploadFile = File(...),
-    current_user: dict = Depends(require_role("PUBLISHER", "MANAGER", "ADMIN")),
+    current_user: dict = Depends(require_role("PUBLISHER", "ADMIN")),
 ) -> SubmissionResponse:
     file_content = await file.read()
 

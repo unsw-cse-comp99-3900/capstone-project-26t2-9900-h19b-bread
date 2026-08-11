@@ -12,20 +12,23 @@ class VersionHistoryService:
     def __init__(self, repository: PostgresVersionHistoryRepository) -> None:
         self.repository = repository
 
-    def list_versions(self, api_id: int, page: int, page_size: int) -> dict:
-        self._require_api(api_id)
+    def list_versions(self, api_id: int, page: int, page_size: int, current_user: dict) -> dict:
+        api = self._require_api(api_id)
+        self._require_viewer(api, current_user)
         items, total = self.repository.list_versions(api_id, page_size, (page - 1) * page_size)
         return {"items": items, "page": page, "page_size": page_size, "total": total}
 
-    def get_version(self, api_id: int, version_id: int) -> dict:
-        self._require_api(api_id)
+    def get_version(self, api_id: int, version_id: int, current_user: dict) -> dict:
+        api = self._require_api(api_id)
+        self._require_viewer(api, current_user)
         version = self.repository.get_version_detail(api_id, version_id)
         if version is None:
             raise VersionNotFoundError(api_id, version_id)
         return version
 
-    def get_specification(self, api_id: int, version_id: int) -> dict:
-        self._require_api(api_id)
+    def get_specification(self, api_id: int, version_id: int, current_user: dict) -> dict:
+        api = self._require_api(api_id)
+        self._require_viewer(api, current_user)
         specification = self.repository.get_specification(api_id, version_id)
         if specification is None:
             raise VersionNotFoundError(api_id, version_id)
@@ -38,8 +41,10 @@ class VersionHistoryService:
         page_size: int,
         version_id: int | None,
         event_type: str | None,
+        current_user: dict,
     ) -> dict:
-        self._require_api(api_id)
+        api = self._require_api(api_id)
+        self._require_viewer(api, current_user)
         if version_id is not None and self.repository.get_version(api_id, version_id) is None:
             raise VersionNotFoundError(api_id, version_id)
         items, total = self.repository.list_events(
@@ -54,8 +59,10 @@ class VersionHistoryService:
         page_size: int,
         version_id: int | None,
         lifecycle_status: str | None,
+        current_user: dict,
     ) -> dict:
-        self._require_api(api_id)
+        api = self._require_api(api_id)
+        self._require_viewer(api, current_user)
         if version_id is not None and self.repository.get_version(api_id, version_id) is None:
             raise VersionNotFoundError(api_id, version_id)
         items, total = self.repository.list_connection_impacts(
@@ -88,7 +95,7 @@ class VersionHistoryService:
             version_id = self.repository.create_version(
                 api_id, current_user["user_id"], previous_id, data
             )
-        return self.get_version(api_id, version_id)
+        return self.get_version(api_id, version_id, current_user)
 
     def update_version(
         self,
@@ -110,7 +117,7 @@ class VersionHistoryService:
             self.repository.update_version(
                 api_id, version_id, current_user["user_id"], data
             )
-        return self.get_version(api_id, version_id)
+        return self.get_version(api_id, version_id, current_user)
 
     def _require_api(self, api_id: int) -> dict:
         api = self.repository.get_api(api_id)
@@ -123,4 +130,11 @@ class VersionHistoryService:
         is_creator = api["submitted_by"] == current_user["user_id"]
         is_admin = str(current_user.get("role", "")).upper() == "ADMIN"
         if not is_creator and not is_admin:
+            raise VersionPermissionError()
+
+    @staticmethod
+    def _require_viewer(api: dict, current_user: dict) -> None:
+        is_same_enterprise = api["enterprise_id"] == current_user.get("enterprise_id")
+        is_admin = str(current_user.get("role", "")).upper() == "ADMIN"
+        if not is_same_enterprise and not is_admin:
             raise VersionPermissionError()
