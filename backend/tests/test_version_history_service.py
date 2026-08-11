@@ -32,6 +32,7 @@ class FakeVersionHistoryRepository:
     def __init__(self, status: str = "PUBLISHED") -> None:
         self.api = {
             "api_id": 7,
+            "enterprise_id": 1,
             "submitted_by": 10,
             "status": status,
             "current_version_id": 70,
@@ -127,14 +128,46 @@ class FakeVersionHistoryRepository:
         return items[offset : offset + limit], len(items)
 
 
-def test_authenticated_history_read_has_no_enterprise_filter() -> None:
+def test_same_enterprise_can_read_version_history() -> None:
     repository = FakeVersionHistoryRepository()
     service = VersionHistoryService(repository)
 
-    result = service.list_versions(api_id=7, page=1, page_size=20)
+    result = service.list_versions(
+        api_id=7,
+        page=1,
+        page_size=20,
+        current_user={"user_id": 11, "role": "PUBLISHER", "enterprise_id": 1},
+    )
 
     assert result["total"] == 1
     assert result["items"][0]["version_id"] == 70
+
+
+def test_other_enterprise_cannot_read_version_history() -> None:
+    repository = FakeVersionHistoryRepository()
+    service = VersionHistoryService(repository)
+
+    with pytest.raises(VersionPermissionError):
+        service.list_versions(
+            api_id=7,
+            page=1,
+            page_size=20,
+            current_user={"user_id": 12, "role": "PUBLISHER", "enterprise_id": 2},
+        )
+
+
+def test_global_admin_can_read_version_history() -> None:
+    repository = FakeVersionHistoryRepository()
+    service = VersionHistoryService(repository)
+
+    result = service.list_versions(
+        api_id=7,
+        page=1,
+        page_size=20,
+        current_user={"user_id": 99, "role": "ADMIN", "enterprise_id": 999},
+    )
+
+    assert result["total"] == 1
 
 
 @pytest.mark.parametrize(
@@ -182,7 +215,7 @@ def test_new_version_rejected_while_current_draft_exists() -> None:
 def test_only_current_draft_can_be_updated() -> None:
     repository = FakeVersionHistoryRepository(status="DRAFT")
     service = VersionHistoryService(repository)
-    creator = {"user_id": 10, "role": "PUBLISHER"}
+    creator = {"user_id": 10, "role": "PUBLISHER", "enterprise_id": 1}
 
     result = service.update_version(7, 70, creator, version_request("v1.1"))
 
@@ -207,7 +240,14 @@ def test_connection_impacts_can_be_filtered_by_lifecycle_status() -> None:
     repository = FakeVersionHistoryRepository()
     service = VersionHistoryService(repository)
 
-    result = service.list_connection_impacts(7, 1, 20, 70, "STALE")
+    result = service.list_connection_impacts(
+        7,
+        1,
+        20,
+        70,
+        "STALE",
+        {"user_id": 11, "role": "PUBLISHER", "enterprise_id": 1},
+    )
 
     assert result["total"] == 1
     assert result["items"][0]["latest_validation_run_status"] == "STALE"

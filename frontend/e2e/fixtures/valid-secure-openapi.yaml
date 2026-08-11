@@ -1,0 +1,43 @@
+openapi: 3.0.3
+info:
+  title: Secure Invoice API
+  version: 1.0.0
+  description: Creates and validates structured electronic invoices for enterprise exchange.
+servers:
+  - url: https://api.example.test
+tags:
+  - name: validation
+paths:
+  /invoices:
+    post:
+      tags: [validation]
+      security:
+        - OAuth2: [invoices.write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [invoiceNumber, amount]
+              properties:
+                invoiceNumber: { type: string }
+                amount: { type: number }
+      responses:
+        '201':
+          description: Invoice accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+components:
+  securitySchemes:
+    OAuth2:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://auth.example.test/oauth/token
+          scopes:
+            invoices.write: Create invoices

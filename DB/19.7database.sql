@@ -968,10 +968,10 @@ INSERT INTO app_user (enterprise_id, name, email, password_hash, role, status)
 VALUES (
     1,
     'Demo Publisher',
-    'publisher@example.com',
-    'ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f',
+    'publisher@example.invalid',
+    '!disabled-demo-account!',
     'PUBLISHER',
-    'ACTIVE'
+    'DISABLED'
 );
 
 -- API #1 history demo

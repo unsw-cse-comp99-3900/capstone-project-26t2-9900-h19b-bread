@@ -680,7 +680,7 @@ const APIInfoForm: React.FC<Props> = ({
       onCancel={handleClose}
       width={700}
       footer={null}
-      destroyOnClose
+      destroyOnHidden
       className="apif-modal"
     >
       {loadingEdit ? (

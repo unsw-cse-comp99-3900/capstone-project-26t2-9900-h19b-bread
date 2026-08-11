@@ -96,7 +96,7 @@ const HomePage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [authorFilter, setAuthorFilter] = useState<string>('all');
   const [tableData, setTableData] = useState<ApiRecord[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
 
@@ -117,8 +117,21 @@ const HomePage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    void loadList();
-  }, [loadList]);
+    let active = true;
+    getSubmissions()
+      .then(items => {
+        if (active) setTableData(items.map(toRecord));
+      })
+      .catch(() => {
+        // interceptor shows error
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const authorOptions = useMemo(
     () => [
@@ -156,10 +169,6 @@ const HomePage: React.FC = () => {
       return haystack.includes(q);
     });
   }, [tableData, listTab, keyword, statusFilter, authorFilter]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [listTab, keyword, statusFilter, authorFilter]);
 
   const handleWithdraw = async (record: ApiRecord) => {
     if (!user) return;
@@ -396,7 +405,10 @@ const HomePage: React.FC = () => {
 
         <Tabs
           activeKey={listTab}
-          onChange={key => setListTab(key as ListTab)}
+          onChange={key => {
+            setListTab(key as ListTab);
+            setPage(1);
+          }}
           items={[
             { key: 'all',  label: 'All APIs' },
             { key: 'mine', label: 'My APIs' },
@@ -410,19 +422,28 @@ const HomePage: React.FC = () => {
             prefix={<SearchOutlined />}
             placeholder="Search by name, URL, creator, status, protocol…"
             value={keyword}
-            onChange={e => setKeyword(e.target.value)}
+            onChange={e => {
+              setKeyword(e.target.value);
+              setPage(1);
+            }}
             className="hp-toolbar__search"
           />
           <Select
             value={statusFilter}
-            onChange={setStatusFilter}
+            onChange={value => {
+              setStatusFilter(value);
+              setPage(1);
+            }}
             options={STATUS_FILTER_OPTIONS}
             className="hp-toolbar__status"
           />
           {listTab === 'all' && (
             <Select
               value={authorFilter}
-              onChange={setAuthorFilter}
+              onChange={value => {
+                setAuthorFilter(value);
+                setPage(1);
+              }}
               options={authorOptions}
               className="hp-toolbar__status"
               showSearch
